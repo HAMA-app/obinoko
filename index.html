@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>帯鋸演算</title>
+  <!-- PWA meta -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#2563eb">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="帯鋸演算">
+  <link rel="apple-touch-icon" href="icon-180.png">
+
+  <style>
+    body { font-family: sans-serif; padding: 1rem; max-width: 900px; margin: auto; }
+    input { width: 100px; margin-right: 6px; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .cut-input { margin-bottom: 0.5rem; }
+    .result { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #ccc; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .error { color: #b00020; font-weight: bold; }
+    .btn { padding: 6px 10px; border: 1px solid #888; background: #f6f6f6; cursor: pointer; border-radius: 6px; }
+    .btn:active { transform: translateY(1px); }
+    .tests { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+  <h1>帯鋸演算（HTML版・長尺優先+ギャップ埋め+監査）</h1>
+
+  <div class="row">
+    <label>部材長さ: <input type="number" id="stockLength" value="1000"> mm</label>
+    <label>本数: <input type="number" id="stockCount" value="10"> 本</label>
+    <label>掴みしろ: <input type="number" id="grip" value="129"> mm</label>
+  </div>
+  <div class="row">
+    <label>切断誤差 (+mm): <input type="number" id="tolerance" value="1"></label>
+    <label>1カットごとの削れ: <input type="number" id="kerf" value="2.5"> mm</label>
+  </div>
+
+  <h3>切断長さと本数（最大30種類）</h3>
+  <div id="cutInputs"></div>
+  <div class="row">
+    <button class="btn" onclick="addCutInput()">切断パターン追加</button>
+    <button class="btn" onclick="calculate()">演算</button>
+  </div>
+
+  <div class="tests">
+    <span>■ テストケース：</span>
+    <button class="btn" onclick="loadTest(1)">T1: 400×2, 100×4 / 1000×3</button>
+    <button class="btn" onclick="loadTest(2)">T2: 200×5（+1誤差）/ 1000×1</button>
+    <button class="btn" onclick="loadTest(3)">T3: 600×1, 300×2 / 1000×2</button>
+    <button class="btn" onclick="loadTest(4)">T4: 400×10, 100×30, 60×40 / 1000×10</button>
+  </div>
+
+  <div class="result" id="result"></div>
+
+  <audio id="beep" src="beep.mp3"></audio>
+
+  <script>
+    // --- ガード: 重複定義の回避（ホットリロード等対策） ---
+    if (!window.__OBIKYO__) window.__OBIKYO__ = {};
+
+    // 一度だけ定義
+    if (!window.__OBIKYO__.initialized) {
+      window.__OBIKYO__.initialized = true;
+      window.__OBIKYO__.cutRowCount = 0;
+
+      window.addCutInput = function addCutInput(length = "", qty = "") {
+        const maxRows = 30;
+        if (window.__OBIKYO__.cutRowCount >= maxRows) return;
+        const div = document.createElement('div');
+        div.className = 'cut-input row';
+        div.innerHTML = `長さ: <input type="number" class="length" value="${length}"> × <input type="number" class="qty" value="${qty}"> 本`;
+        document.getElementById('cutInputs').appendChild(div);
+        window.__OBIKYO__.cutRowCount++;
+      }
+
+      function beep() {
+        const a = document.getElementById('beep');
+        if (a) { a.currentTime = 0; a.play().catch(()=>{}); }
+      }
+
+      function buildCuts(tolerance) {
+        const lengths = [...document.querySelectorAll('.length')];
+        const qtys = [...document.querySelectorAll('.qty')];
+        const cuts = [];
+        for (let i = 0; i < lengths.length; i++) {
+          const target = Number(lengths[i].value);
+          const qty = Number(qtys[i].value);
+          if (!target || !qty) continue;
+          const input = target - tolerance; // 誤差+1 → 設定を1短く
+          for (let j = 0; j < qty; j++) cuts.push({ target, input });
+        }
+        return cuts;
+      }
+
+      function statsFromCuts(cuts, kerf) {
+        const map = new Map();
+        let totalCuts = 0, totalUsage = 0;
+        for (const c of cuts) {
+          map.set(c.target, (map.get(c.target) || 0) + 1);
+          totalCuts += 1;
+          totalUsage += (c.target + kerf);
+        }
+        return { countByTarget: map, totalCuts, totalUsage };
+      }
+
+      function assignBoardsDescending(cuts, stockLength, stockCount, grip, kerf) {
+        // 第1パス：長い順で“初期割当”
+        const boards = Array.from({length: stockCount}, (_, i) => ({ id: i+1, cuts: [], used: 0 }));
+        // 長い順
+        let remaining = cuts.slice().sort((a, b) => b.target - a.target);
+
+        const CANDIDATE_LIMIT = 60;   // 1部材に対して評価する候補上限
+        const NODE_LIMIT = 20000;     // DFSノード上限
+
+        for (const board of boards) {
+          if (remaining.length === 0) break;
+          const capacity = stockLength - grip; // 有効長
+          const pool = remaining.slice(0, Math.min(CANDIDATE_LIMIT, remaining.length));
+
+          let bestPlan = [];
+          let bestUsed = 0;
+          let nodes = 0;
+
+          function dfs(idx, used, chosen) {
+            if (++nodes > NODE_LIMIT) return;
+            if (used > bestUsed) { bestUsed = used; bestPlan = chosen.slice(); }
+            for (let i = idx; i < pool.length; i++) {
+              const c = pool[i];
+              const need = c.target + kerf; // 本ごとの削れ加算
+              if (used + need > capacity) continue;
+              chosen.push(c);
+              dfs(i + 1, used + need, chosen);
+              chosen.pop();
+            }
+          }
+          dfs(0, 0, []);
+
+          board.cuts = bestPlan;
+          board.used = bestPlan.reduce((s, c) => s + c.target + kerf, 0);
+          const set = new Set(bestPlan);
+          remaining = remaining.filter(x => !set.has(x));
+        }
+        return { boards, remaining };
+      }
+
+      function gapFill(boards, remaining, stockLength, grip, kerf) {
+        // 第2パス：短い順でギャップ埋め
+        remaining.sort((a, b) => a.target - b.target);
+        for (const board of boards) {
+          let cap = (stockLength - grip) - board.used; // 有効残長
+          if (cap <= 0) continue;
+          for (let i = 0; i < remaining.length && cap > 0; ) {
+            const c = remaining[i];
+            const need = c.target + kerf;
+            if (need <= cap + 1e-9) { // 浮動小数誤差対策
+              board.cuts.push(c);
+              board.used += need;
+              cap -= need;
+              remaining.splice(i, 1);
+            } else {
+              // 最短が入らないならそれ以降も入らない
+              break;
+            }
+          }
+          // 念のためクランプ（誤差で越境しないよう）
+          const capMax = stockLength - grip;
+          if (board.used > capMax) board.used = capMax;
+        }
+        return remaining;
+      }
+
+      function tallyCuts(cuts) {
+        const map = new Map();
+        for (const c of cuts) {
+          const key = `${c.input}->${c.target}`; // 機械設定→実長で同一視
+          if (!map.has(key)) map.set(key, { input: c.input, target: c.target, count: 0 });
+          map.get(key).count++;
+        }
+        return Array.from(map.values()).sort((a,b)=> a.target - b.target || a.input - b.input);
+      }
+
+      function compressIds(ids) {
+        ids.sort((a,b)=>a-b);
+        const ranges = [];
+        let start = ids[0], prev = ids[0];
+        for (let i = 1; i < ids.length; i++) {
+          const cur = ids[i];
+          if (cur === prev + 1) { prev = cur; continue; }
+          ranges.push(start === prev ? `${start}` : `${start}〜${prev}`);
+          start = prev = cur;
+        }
+        ranges.push(start === prev ? `${start}` : `${start}〜${prev}`);
+        return ranges.join(',');
+      }
+
+      function renderOutput(boards, shortageMap, stockLength, grip, audit) {
+        const SL = Number(stockLength), GR = Number(grip);
+
+        // 1) ボードごとに集計＆シグネチャ化（まとめ表示）
+        const sigMap = new Map();
+        for (const board of boards) {
+          if (!board || !Array.isArray(board.cuts) || board.cuts.length === 0) continue;
+          const tally = tallyCuts(board.cuts);
+          const rEx = Math.max(0, (SL - GR) - board.used);
+          const rIn = Math.max(0, SL - board.used); // 掴みしろ含む残長
+          const sig = JSON.stringify({ tally, rEx: +rEx.toFixed(3), rIn: +rIn.toFixed(3) });
+          if (!sigMap.has(sig)) sigMap.set(sig, { ids: [], tally, rEx, rIn });
+          sigMap.get(sig).ids.push(board.id);
+        }
+
+        let out = '';
+        let totalRemainInclGrip = 0;
+        for (const { ids, tally, rEx, rIn } of Array.from(sigMap.values()).sort((a,b)=>a.ids[0]-b.ids[0])) {
+          totalRemainInclGrip += rIn * ids.length; // グループ数分
+          out += `【部材${compressIds(ids)}】\n`;
+          for (const row of tally) {
+            out += `・${row.input}mm（機械設定） → ${row.target}mm（実長） × ${row.count}本\n`;
+          }
+          out += `余り（掴みしろ含む）: ${rIn.toFixed(1)} mm（内 有効残長: ${rEx.toFixed(1)} mm）\n\n`;
+        }
+        out += `合計余り（掴みしろ含む・全材）: ${totalRemainInclGrip.toFixed(1)} mm\n`;
+
+        // 2) 不足
+        const keys = Array.from(shortageMap.keys()).sort((a,b)=>a-b);
+        if (keys.length > 0) {
+          out += `\n切断不足：\n`;
+          for (const k of keys) out += `・${k}mm × ${shortageMap.get(k)}本\n`;
+          beep();
+        } else {
+          out += `\n切断不足：なし\n`;
+        }
+
+        // 3) 監査（総量チェック）
+        out += `\n--- 監査 ---\n`;
+        out += `要求合計（長さ+削れ）: ${audit.demandUsage.toFixed(1)} mm\n`;
+        out += `理論容量（有効×本数）: ${audit.totalCapacity.toFixed(1)} mm\n`;
+        out += `実割当（長さ+削れ）: ${audit.assignedUsage.toFixed(1)} mm\n`;
+        out += `理論上 不足発生?: ${audit.demandUsage > audit.totalCapacity ? 'はい' : 'いいえ'}\n`;
+
+        document.getElementById('result').textContent = out;
+      }
+
+      window.calculate = function calculate() {
+        const stockLength = Number(document.getElementById('stockLength').value);
+        const stockCount = Number(document.getElementById('stockCount').value);
+        const grip = Number(document.getElementById('grip').value);
+        const kerf = Number(document.getElementById('kerf').value);
+        const tolerance = Number(document.getElementById('tolerance').value);
+        document.getElementById('result').textContent = '';
+
+        // 1) 切断データ展開
+        const cuts = buildCuts(tolerance);
+        if (cuts.length === 0 || stockCount <= 0 || stockLength <= 0) {
+          document.getElementById('result').textContent = '入力が不足しています。';
+          return;
+        }
+        const demand = statsFromCuts(cuts, kerf);
+        const totalCapacity = (stockLength - grip) * stockCount;
+
+        // 2) 長尺優先の初期割当
+        const { boards, remaining } = assignBoardsDescending(cuts, stockLength, stockCount, grip, kerf);
+
+        // 3) 短尺優先のギャップ埋め
+        const afterGap = gapFill(boards, remaining, stockLength, grip, kerf);
+
+        // 4) 実際に割り当てた本数・使用量を算出
+        const assignedCutsArray = boards.flatMap(b => b.cuts);
+        const assigned = statsFromCuts(assignedCutsArray, kerf);
+
+        // 5) 不足の再計算（参照落ち等を完全排除）
+        const shortageMap = new Map();
+        // 5-1) まず残リストから加算
+        for (const c of afterGap) shortageMap.set(c.target, (shortageMap.get(c.target) || 0) + 1);
+        // 5-2) それでも不足0のとき、総量で差分チェック
+        if (shortageMap.size === 0) {
+          for (const [t, need] of demand.countByTarget.entries()) {
+            const done = assigned.countByTarget.get(t) || 0;
+            if (done < need) shortageMap.set(t, need - done);
+          }
+        }
+
+        // 6) 監査データ
+        const audit = {
+          demandUsage: demand.totalUsage,
+          totalCapacity: totalCapacity,
+          assignedUsage: assigned.totalUsage
+        };
+
+        // 7) 出力
+        renderOutput(boards, shortageMap, stockLength, grip, audit);
+      }
+
+      window.resetCuts = function resetCuts() {
+        document.getElementById('cutInputs').innerHTML = '';
+        window.__OBIKYO__.cutRowCount = 0;
+      }
+
+      window.loadTest = function loadTest(id) {
+        resetCuts();
+        const L = (v) => document.getElementById(v);
+        if (id === 1) {
+          // 400×2, 100×4 / 1000×3, grip=129, kerf=2.5, tol=+1
+          L('stockLength').value = 1000; L('stockCount').value = 3; L('grip').value = 129;
+          L('kerf').value = 2.5; L('tolerance').value = 1;
+          addCutInput(400,2); addCutInput(100,4);
+        } else if (id === 2) {
+          // 200×5（+1誤差）/ 1000×1
+          L('stockLength').value = 1000; L('stockCount').value = 1; L('grip').value = 100;
+          L('kerf').value = 2.5; L('tolerance').value = 1;
+          addCutInput(200,5);
+        } else if (id === 3) {
+          // 600×1, 300×2 / 1000×2
+          L('stockLength').value = 1000; L('stockCount').value = 2; L('grip').value = 120;
+          L('kerf').value = 3; L('tolerance').value = 0;
+          addCutInput(600,1); addCutInput(300,2);
+        } else if (id === 4) {
+          // あなたのケース：400×10, 100×30, 60×40 / 1000×10
+          L('stockLength').value = 1000; L('stockCount').value = 10; L('grip').value = 129;
+          L('kerf').value = 2.5; L('tolerance').value = 1;
+          addCutInput(400,10); addCutInput(100,30); addCutInput(60,40);
+        }
+        calculate();
+      }
+
+      // 初期：入力行3つ
+      for (let i = 0; i < 3; i++) addCutInput();
+    }
+  </script>
+  <script>
+    // --- PWA: Service Worker 登録（対応ブラウザのみ） ---
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(console.error);
+      });
+    }
+  </script>
+</body>
+</html>
