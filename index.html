@@ -36,9 +36,14 @@ label > span{opacity:.85}
 
 /* 入力欄はタップしやすく、角丸＆影を控えめに */
 input{
-  width:100%; max-width:180px; padding:12px 14px; font-size:16px;
-  border:1px solid var(--border); border-radius:12px; background:var(--panel); color:var(--text);
-  box-shadow:0 1px 0 rgba(255,255,255,.03) inset, 0 1px 8px rgba(0,0,0,.25);
+  width:8ch; /* 8文字分の幅 */
+  margin-right:6px;
+  padding:8px 10px;
+  font-size:16px; /* iPhone拡大防止 */
+  border:1px solid var(--border);
+  border-radius:10px;
+  background:var(--panel);
+  color:var(--text);
 }
 
 /* 行配置：スマホでは縦積み、タブレット以上で横並び */
