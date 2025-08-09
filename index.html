@@ -13,45 +13,69 @@
   <meta name="apple-mobile-web-app-title" content="帯鋸演算">
   <link rel="apple-touch-icon" href="icon-180.png">
   <style>
-    :root{
-      --bg:#121212; --bg2:#0f0f0f; --panel:#1e1e1e; --panel2:#252525;
-      --text:#f5f5f5; --muted:#bdbdbd; --border:#3a3a3a;
-      --brand:#2563eb; --brand2:#1d4ed8; --danger:#ff6b6b;
-    }
-    body{
-      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans JP",sans-serif;
-      padding:1rem; max-width:900px; margin:auto;
-      background:linear-gradient(180deg,var(--bg),var(--bg2) 60%);
-      color:var(--text);
-      -webkit-tap-highlight-color: transparent;
-    }
-    h1{color:#fff; margin:0 0 1rem; font-size:1.4rem;}
-    label{color:var(--muted); font-size:1rem;}
-    input{
-      width:110px; margin-right:6px; padding:12px;
-      font-size:16px; /* iPhone拡大防止 */
-      border:1px solid var(--border); border-radius:10px;
-      background:var(--panel); color:var(--text);
-    }
-    .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center; margin-bottom:0.5rem;}
-    .cut-input{margin-bottom:0.5rem;}
-    .btn{
-      padding:12px 16px; border:1px solid transparent;
-      background:var(--brand); color:#fff; border-radius:10px; cursor:pointer;
-      font-size:16px; min-height:44px; line-height:1.2;
-    }
-    .btn:hover{background:var(--brand2);}
-    .result{
-      margin-top:1rem; padding:1rem; border-top:1px solid var(--border);
-      white-space:pre-wrap; font-family:ui-monospace, SFMono-Regular, Menlo, monospace;
-      background:var(--panel); border-radius:10px;
-    }
-    .error{color:var(--danger); font-weight:bold;}
-    .tests{margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;}
-    @media (max-width:640px){
-      input{flex:1; min-width:90px;}
-      .btn{flex:1; text-align:center;}
-    }
+ /* ===== iPhone視認性＆タップ性 改善 ===== */
+:root{
+  --bg:#111; --bg2:#0c0c0c; --panel:#181818; --panel2:#1f1f1f;
+  --text:#fafafa; --muted:#c7c7c7; --border:#2e2e2e;
+  --brand:#2f6dff; --brand2:#2455cc; --danger:#ff6b6b;
+}
+
+html,body{background:linear-gradient(180deg,var(--bg),var(--bg2) 60%); color:var(--text);}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans JP",sans-serif;
+  padding:16px; max-width:900px; margin:auto; -webkit-tap-highlight-color:transparent;
+  -webkit-text-size-adjust:100%;
+}
+
+/* 見出しを短く、余白はしっかり */
+h1{margin:0 0 12px; font-size:20px; line-height:1.25; font-weight:700;}
+
+/* ラベルは縦積み（スマホ時）で読みやすく、単位は薄め */
+label{color:var(--muted); font-size:15px; display:flex; flex-direction:column; gap:6px;}
+label > span{opacity:.85}
+
+/* 入力欄はタップしやすく、角丸＆影を控えめに */
+input{
+  width:100%; max-width:180px; padding:12px 14px; font-size:16px;
+  border:1px solid var(--border); border-radius:12px; background:var(--panel); color:var(--text);
+  box-shadow:0 1px 0 rgba(255,255,255,.03) inset, 0 1px 8px rgba(0,0,0,.25);
+}
+
+/* 行配置：スマホでは縦積み、タブレット以上で横並び */
+.row{display:flex; flex-wrap:wrap; gap:14px 18px; align-items:flex-end; margin-bottom:8px;}
+@media (min-width:700px){
+  .row label{flex-direction:row; align-items:center;}
+  .row input{max-width:140px;}
+}
+
+/* 追加/演算ボタン：押しやすいサイズ＋2列グリッドで詰まらない */
+.btn{
+  background:var(--brand); color:#fff; border:none; border-radius:12px; cursor:pointer;
+  padding:12px 16px; font-size:16px; min-height:44px; line-height:1.2;
+  box-shadow:0 2px 10px rgba(0,0,0,.35);
+}
+.btn:hover{background:var(--brand2);}
+
+/* テストボタンはカード化＆2列グリッド */
+.tests{margin-top:12px; display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:10px;}
+.tests > span{grid-column:1 / -1; color:var(--muted); margin-bottom:2px;}
+.tests .btn{width:100%;}
+
+/* 結果パネル：読みやすい文字サイズ＆行間、情報の強弱を付ける */
+.result{
+  margin-top:14px; padding:16px; background:var(--panel2); border:1px solid var(--border); border-radius:14px;
+  white-space:pre-wrap; font-family: -apple-system, BlinkMacSystemFont, "Noto Sans JP", sans-serif; /* 等幅→可読性重視 */
+  font-size:15px; line-height:1.6; letter-spacing:.2px;
+}
+
+/* 出力テキストの簡易ハイライト（先頭の【部材…】行を太字に） */
+.result { counter-reset: grp; }
+.result::selection{background:#2643a5; color:#fff;}
+.result b{font-weight:700;}
+.error{color:var(--danger); font-weight:700;}
+/* 箇条書きの点を見やすく */
+.result { --dot:'・'; }
+
   </style>
 </head>
 <body>
