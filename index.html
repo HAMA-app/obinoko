@@ -19,8 +19,11 @@
       --bg:#111; --bg2:#0c0c0c; --panel:#181818; --panel2:#1f1f1f;
       --text:#fafafa; --muted:#c7c7c7; --border:#2b2b2b;
       --brand:#2f6dff; --brand2:#2455cc; --danger:#ff6b6b;
-      --input-w:8ch;     /* 00000.0 が入る幅 */
+      --input-w:8ch;           /* 00000.0 が入る幅 */
       --radius:12px;
+      --input-bg:#2a2a2a;      /* 入力の明るめグレー */
+      --input-bg-focus:#343434;/* フォーカス時 */
+      --y:#ffd54f;             /* 出力の黄色（機械設定・個数） */
     }
     html,body{background:linear-gradient(180deg,var(--bg),var(--bg2) 60%); color:var(--text);}
     body{
@@ -32,7 +35,7 @@
     h1{margin:0 0 12px; font-size:20px; line-height:1.25; font-weight:700;}
     h1::after{ content:" （長さ単位：mm）"; font-weight:400; font-size:0.9em; color:var(--muted); }
 
-    /* 入力行：2カラム自動（狭ければ1列へ） */
+    /* 1段目の基本入力：2カラム自動（狭ければ1列へ） */
     .row{
       display:grid;
       grid-template-columns: repeat(2, minmax(220px, 1fr));
@@ -51,7 +54,7 @@
       gap:6px;
     }
 
-    /* 入力枠は幅8chでコンパクト */
+    /* 入力枠は幅8chでコンパクト、明るいグレー */
     input{
       width:var(--input-w);
       max-width:calc(100% - 4px);
@@ -59,48 +62,77 @@
       font-size:16px; /* iPhone拡大防止 */
       border:1px solid var(--border);
       border-radius:var(--radius);
-      background:var(--panel);
+      background:var(--input-bg);
       color:var(--text);
       box-shadow:0 1px 0 rgba(255,255,255,.03) inset, 0 1px 8px rgba(0,0,0,.25);
     }
-
-    /* 切断入力1行：[長さ] × [本数] を等間隔に */
-    .cut-input{
-      display:grid;
-      grid-template-columns: 1fr auto 1fr;
-      align-items:center;
-      gap:10px;
-      margin-bottom:8px;
+    input:focus{
+      outline:none;
+      background:var(--input-bg-focus);
+      border-color:#3e3e3e;
     }
 
-    /* ボタン */
+    /* ===== 切断入力エリアを表計算風に整列 ===== */
+    .input-sheet{
+      margin-top:6px;
+      background:var(--panel2);
+      border:1px solid var(--border);
+      border-radius:12px;
+      padding:10px;
+    }
+    .sheet-head{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap:8px 16px;
+      padding:4px 2px 8px;
+      color:var(--muted);
+      font-size:13px;
+    }
+/* 2列グリッドにして、各行は [長さ][本数] の2セルだけ */
+#cutInputs{
+  display:grid;
+  grid-template-columns: 1fr 1fr; /* 縦に行が増えるほど2列で整列 */
+  gap:10px 16px;
+}
+
+/* .cut-input 自体はラッパー。中身（2つの input）をそのまま #cutInputs の2セルに流す */
+.cut-input{
+  display: contents; /* ラッパーを消し、中の2つの input だけをグリッド要素にする */
+}
+
+/* 2つの input は幅いっぱいで揃える */
+.cut-input .length,
+.cut-input .qty{
+  width:100%;
+}
+
+    /* 追加/演算ボタン */
     .btn{
       background:var(--brand); color:#fff; border:none; border-radius:var(--radius);
       cursor:pointer; padding:12px 16px; font-size:16px; min-height:44px; line-height:1.2;
       box-shadow:0 2px 10px rgba(0,0,0,.35);
     }
     .btn:hover{background:var(--brand2);}
-
-    /* テストケースは2列カード */
     .tests{margin-top:12px; display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:10px; align-items:stretch;}
     .tests > span{grid-column:1 / -1; color:var(--muted); margin:0 0 -2px;}
 
-    /* 結果パネル：部材ごとカード化＋2カラム（内訳 / 余り） */
+    /* ===== 出力（部材ごとカード or 表計算テーブル、どちらでも見やすく） ===== */
     .result{
       margin-top:14px; padding:16px; background:var(--panel2); border:1px solid var(--border); border-radius:14px;
       font-size:15px; line-height:1.65; letter-spacing:.2px;
       white-space:normal;
     }
-    .result b{display:block; font-size:16px; margin:10px 0 6px;}
-    .group{
-      display:grid; grid-template-columns: 1fr 160px; gap:6px 14px; align-items:start;
-      padding:10px 12px; background:var(--panel); border:1px solid var(--border); border-radius:12px; margin:6px 0 12px;
-    }
-    .cell-title{color:var(--muted); font-size:13px; margin-bottom:4px;}
-    .cuts{white-space:pre-wrap;}
-    .remain{font-variant-numeric:tabular-nums; text-align:right;}
-    .dot{display:inline-block; width:12px; color:var(--muted);}
-    .error{color:var(--danger); font-weight:700;}
+    .y{ color:var(--y); font-weight:600; } /* 機械設定・個数を黄色で強調 */
+
+    /* 表計算テーブル用（renderOutputで使用） */
+    .table-wrap{ margin-top:12px; background:var(--panel2); border:1px solid var(--border); border-radius:12px; overflow:auto; }
+    .table{ width:100%; min-width:760px; border-collapse:separate; border-spacing:0; font-size:15px; line-height:1.5; }
+    .table th, .table td{ padding:10px 12px; border-bottom:1px solid var(--border); white-space:nowrap; }
+    .table thead th{ position:sticky; top:0; background:var(--panel2); z-index:1; text-align:left; color:var(--muted); font-weight:600; backdrop-filter:blur(4px); }
+    .num{ text-align:right; font-variant-numeric:tabular-nums; }
+    .group-head{ font-weight:600; }
+    .table tr:last-child td{ border-bottom:none; }
+    .subtle{ color:var(--muted); }
   </style>
 </head>
 <body>
@@ -119,8 +151,17 @@
   </div>
 
   <h3>切断長さと本数（最大30種類）</h3>
-  <div id="cutInputs"></div>
-  <div class="row" style="grid-template-columns:repeat(2,minmax(160px,1fr))">
+
+  <!-- 入力表（ヘッダー＋2列グリッド） -->
+  <div class="input-sheet">
+    <div class="sheet-head">
+      <div>長さ (mm)</div>
+      <div>本数 (本)</div>
+    </div>
+    <div id="cutInputs"></div>
+  </div>
+
+  <div class="row" style="grid-template-columns:repeat(2,minmax(160px,1fr));margin-top:10px">
     <button class="btn" onclick="addCutInput()">切断パターン追加</button>
     <button class="btn" onclick="calculate()">演算</button>
   </div>
@@ -145,16 +186,21 @@
       window.__OBIKYO__.initialized = true;
       window.__OBIKYO__.cutRowCount = 0;
 
-      // 入力行追加（最大30）
-      window.addCutInput = function addCutInput(length = "", qty = "") {
-        const maxRows = 30;
-        if (window.__OBIKYO__.cutRowCount >= maxRows) return;
-        const div = document.createElement('div');
-        div.className = 'cut-input';
-        div.innerHTML = `長さ: <input type="number" class="length" value="${length}"> × <input type="number" class="qty" value="${qty}"> 本`;
-        document.getElementById('cutInputs').appendChild(div);
-        window.__OBIKYO__.cutRowCount++;
-      }
+// 入力行追加（最大30）— 長さ/本数を2セルに分離
+window.addCutInput = function addCutInput(length = "", qty = "") {
+  const maxRows = 30;
+  if (window.__OBIKYO__.cutRowCount >= maxRows) return;
+
+  const row = document.createElement('div');
+  row.className = 'cut-input';
+  // 2セルだけをグリッドに流す（余計なテキストは入れない）
+  row.innerHTML = `
+    <input type="number" class="length" placeholder="長さ" aria-label="長さ(mm)" value="${length}">
+    <input type="number" class="qty" placeholder="本数" aria-label="本数(本)" value="${qty}">
+  `;
+  document.getElementById('cutInputs').appendChild(row);
+  window.__OBIKYO__.cutRowCount++;
+};
 
       function beep() {
         const a = document.getElementById('beep');
@@ -273,72 +319,91 @@
         return ranges.join(',');
       }
 
-      // ===== 出力（見た目だけを整形、小数は1桁固定） =====
+      // ===== 出力：表計算テーブル（数値は小数1桁固定） =====
       function renderOutput(boards, shortageMap, stockLength, grip, audit) {
         const SL = Number(stockLength), GR = Number(grip);
 
-        // 1) ボードごとに集計＆シグネチャ化（まとめ表示）
+        // 1) 集計：同一構成をグルーピング
         const sigMap = new Map();
         for (const board of boards) {
-          if (!board || !Array.isArray(board.cuts) || board.cuts.length === 0) continue;
-          const tally = tallyCuts(board.cuts);
+          if (!board?.cuts?.length) continue;
+          const tally = tallyCuts(board.cuts); // [{input,target,count},...]
           const rEx = Math.max(0, (SL - GR) - board.used);
           const rIn = Math.max(0, SL - board.used); // 掴みしろ含む
-          const sig = JSON.stringify({ tally, rEx: +rEx.toFixed(3), rIn: +rIn.toFixed(3) });
-          if (!sigMap.has(sig)) sigMap.set(sig, { ids: [], tally, rEx, rIn });
+          const sig = JSON.stringify({ tally, rEx:+rEx.toFixed(3), rIn:+rIn.toFixed(3) });
+          if (!sigMap.has(sig)) sigMap.set(sig, { ids:[], tally, rEx, rIn });
           sigMap.get(sig).ids.push(board.id);
         }
 
-        // 2) 描画用HTMLを組み立て（カード＋2カラム）
+        // 2) テーブル構築
         let totalRemainInclGrip = 0;
-        let html = '';
+        let rowsHtml = '';
         for (const { ids, tally, rEx, rIn } of Array.from(sigMap.values()).sort((a,b)=>a.ids[0]-b.ids[0])) {
           totalRemainInclGrip += rIn * ids.length;
 
-          const head = `【部材${compressIds(ids)}】`;
-          // 左：切断内訳
-          let cutsHtml = `<div class="cell-title">切断内訳</div><div class="cuts">`;
-          for (const row of tally) {
+          const groupLabel = `部材${compressIds(ids)}`;
+          const remainCell =
+            `<td class="num" rowspan="${tally.length}">${Number(rIn).toFixed(1)}</td>` +
+            `<td class="num" rowspan="${tally.length}">${Number(rEx).toFixed(1)}</td>`;
+
+          tally.forEach((row, idx) => {
             const inp = Number(row.input).toFixed(1);
             const tgt = Number(row.target).toFixed(1);
-            cutsHtml += `<div><span class="dot">•</span>${inp}mm（機械設定） → ${tgt}mm（実長） × ${row.count}本</div>`;
-          }
-          cutsHtml += `</div>`;
-          // 右：余り
-          const remHtml = `<div class="cell-title">余り</div>
-            <div class="remain">
-              掴みしろ含む：${Number(rIn).toFixed(1)} mm<br>
-              有効残長　　：${Number(rEx).toFixed(1)} mm
-            </div>`;
+            const qty = row.count;
+            const usedLen = (Number(row.target) * qty).toFixed(1);
+            const kerfSum = (qty * Number(document.getElementById('kerf').value)).toFixed(1);
 
-          html += `<b>${head}</b><div class="group">${cutsHtml}${remHtml}</div>`;
-        }
-        html += `<div style="margin-top:6px">合計余り（掴みしろ含む・全材）：${totalRemainInclGrip.toFixed(1)} mm</div>`;
-
-        // 3) 不足
-        const keys = Array.from(shortageMap.keys()).sort((a,b)=>a-b);
-        if (keys.length > 0) {
-          html += `<div style="margin-top:10px"><b>切断不足：</b>`;
-          for (const k of keys) html += `<div>・${Number(k).toFixed(1)}mm × ${shortageMap.get(k)}本</div>`;
-          html += `</div>`;
-          beep();
-        } else {
-          html += `<div style="margin-top:10px"><b>切断不足：</b>なし</div>`;
+            rowsHtml += `<tr>
+              ${idx===0 ? `<td class="group-head" rowspan="${tally.length}">${groupLabel}</td>` : ``}
+              <td class="num">${tgt}</td>
+              <td class="num y">${inp}</td>
+              <td class="num y">${qty}</td>
+              <td class="num">${usedLen}</td>
+              <td class="num subtle">${kerfSum}</td>
+              ${idx===0 ? remainCell : ``}
+            </tr>`;
+          });
         }
 
-        // 4) 監査
-        html += `<div style="margin-top:10px">
-          <div>--- 監査 ---</div>
-          <div>要求合計（長さ+削れ）：${audit.demandUsage.toFixed(1)} mm</div>
-          <div>理論容量（有効×本数）：${audit.totalCapacity.toFixed(1)} mm</div>
-          <div>実割当（長さ+削れ）：${audit.assignedUsage.toFixed(1)} mm</div>
-          <div>理論上 不足発生?: ${audit.demandUsage > audit.totalCapacity ? 'はい' : 'いいえ'}</div>
+        // 3) テーブル本体HTML
+        const tableHtml = `
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>部材</th>
+                <th class="num">実長<br><span class="subtle">(mm)</span></th>
+                <th class="num">機械設定<br><span class="subtle">(mm)</span></th>
+                <th class="num">本数</th>
+                <th class="num">実使用長<br><span class="subtle">(mm)</span></th>
+                <th class="num">削れ合計<br><span class="subtle">(mm)</span></th>
+                <th class="num">余り(含む)<br><span class="subtle">(mm)</span></th>
+                <th class="num">有効残長<br><span class="subtle">(mm)</span></th>
+              </tr>
+            </thead>
+            <tbody>${rowsHtml || `<tr><td colspan="8" class="subtle">切断結果がありません</td></tr>`}</tbody>
+          </table>
         </div>`;
 
-        document.getElementById('result').innerHTML = html;
+        // 4) 不足・監査
+        const keys = Array.from(shortageMap.keys()).sort((a,b)=>a-b);
+        let below = `<div style="margin-top:8px">合計余り（掴みしろ含む・全材）：<b>${totalRemainInclGrip.toFixed(1)} mm</b></div>`;
+        if (keys.length > 0) {
+          below += `<div style="margin-top:6px"><b>切断不足：</b>` +
+                  keys.map(k => ` ${Number(k).toFixed(1)}mm × ${shortageMap.get(k)}本`).join(' / ') +
+                  `</div>`;
+          beep();
+        } else {
+          below += `<div style="margin-top:6px"><b>切断不足：</b>なし</div>`;
+        }
+        below += `<div style="margin-top:8px" class="subtle">
+          --- 監査 ---　要求 ${audit.demandUsage.toFixed(1)}mm ／ 容量 ${audit.totalCapacity.toFixed(1)}mm ／ 実割当 ${audit.assignedUsage.toFixed(1)}mm ／ 不足発生? ${audit.demandUsage > audit.totalCapacity ? 'はい' : 'いいえ'}
+        </div>`;
+
+        document.getElementById('result').innerHTML = tableHtml + below;
       }
 
-      // ===== メイン処理はそのまま =====
+      // ===== メイン処理（ロジックは従来どおり） =====
       window.calculate = function calculate() {
         const stockLength = Number(document.getElementById('stockLength').value);
         const stockCount = Number(document.getElementById('stockCount').value);
