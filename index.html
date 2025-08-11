@@ -5,6 +5,7 @@
   <!-- iPhone入力時の拡大防止 -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>帯鋸演算</title>
+
   <!-- PWA meta -->
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#2563eb">
@@ -14,17 +15,15 @@
   <link rel="apple-touch-icon" href="icon-180.png">
 
   <style>
-    /* ===== ダークUI & トークン ===== */
     :root{
       --bg:#111; --bg2:#0c0c0c; --panel:#181818; --panel2:#1f1f1f;
       --text:#fafafa; --muted:#c7c7c7; --border:#2b2b2b;
       --brand:#2f6dff; --brand2:#2455cc; --danger:#ff6b6b;
-      --input-w:8ch;                 /* 00000.0 が入る幅 */
+      --input-bg:#2a2a2a; --input-bg-focus:#343434;
+      --y:#ffd54f;
       --radius:12px;
-      --input-bg:#2a2a2a;            /* 入力の明るめグレー */
-      --input-bg-focus:#343434;
-      --y:#ffd54f;                   /* 出力の黄色（機械設定・個数） */
-      --label-w: 88px;               /* ラベル列幅 */
+      --label-w:88px;
+      --input-w:8ch; /* 00000.0 が入る幅 */
     }
     html,body{background:linear-gradient(180deg,var(--bg),var(--bg2) 60%); color:var(--text);}
     body{
@@ -32,37 +31,27 @@
       padding:16px; max-width:900px; margin:auto; -webkit-tap-highlight-color:transparent; -webkit-text-size-adjust:100%;
     }
 
-    /* 見出し */
     h1{margin:0 0 10px; font-size:20px; line-height:1.25; font-weight:700;}
     .unit-note{color:var(--muted); font-size:13px; margin:0 0 12px;}
 
-    /* ===== 上部：設定エリア（2列×2行 + 全幅1行） ===== */
     .settings{
       background:var(--panel2); border:1px solid var(--border); border-radius:12px; padding:12px;
       display:grid; grid-template-columns: 1fr 1fr; gap:12px 16px;
     }
-    .s-row{
-      display:grid; grid-template-columns: var(--label-w) auto; align-items:center; gap:6px 8px;
-    }
-    .s-span-2{
-      grid-column:1 / -1;
-      display:grid; grid-template-columns: var(--label-w) auto; align-items:center; gap:6px 8px;
-    }
+    .s-row{ display:grid; grid-template-columns: var(--label-w) auto; align-items:center; gap:6px 8px; }
+    .s-span-2{ grid-column:1 / -1; display:grid; grid-template-columns: var(--label-w) auto; align-items:center; gap:6px 8px; }
     .s-label{ color:var(--muted); font-size:14px; }
-    .unit{ color:var(--muted); margin-left:6px; font-size:13px; white-space:nowrap; line-height:1; }
     .s-row > div, .s-span-2 > div{ display:inline-flex; align-items:center; gap:6px; flex-wrap:nowrap; }
 
     input{
       width:var(--input-w); max-width:100%;
-      padding:10px 12px; font-size:16px;   /* iPhone拡大防止 */
+      padding:10px 12px; font-size:16px; line-height:1.2;
       border:1px solid var(--border); border-radius:var(--radius);
       background:var(--input-bg); color:var(--text);
-      line-height:1.2;
       box-shadow:0 1px 0 rgba(255,255,255,.03) inset, 0 1px 8px rgba(0,0,0,.25);
     }
     input:focus{ outline:none; background:var(--input-bg-focus); border-color:#3e3e3e; }
 
-    /* ===== 切断入力：表計算風 2列（長さ/本数） ===== */
     h3{margin:16px 0 10px; font-size:16px;}
     .input-sheet{ background:var(--panel2); border:1px solid var(--border); border-radius:12px; padding:10px; }
     .sheet-head{ display:grid; grid-template-columns: 1fr 1fr; gap:8px 16px; padding:2px 2px 8px; color:var(--muted); font-size:13px; }
@@ -70,7 +59,6 @@
     .cut-input{ display:contents; }
     .cut-input .length, .cut-input .qty{ width:var(--input-w); }
 
-    /* ボタン */
     .btn{
       background:var(--brand); color:#fff; border:none; border-radius:var(--radius);
       cursor:pointer; padding:12px 16px; font-size:16px; min-height:44px; line-height:1.2;
@@ -79,13 +67,16 @@
     .btn:hover{ background:var(--brand2); }
     .btn-row{ display:grid; grid-template-columns: repeat(2, minmax(160px,1fr)); gap:10px; margin-top:10px; }
 
-    /* テストケース */
+    /* 演算ボタン：黄色 */
+    .btn-calc{ background:#facc15; color:#111; }
+    .btn-calc:hover{ background:#eab308; }
+
     .tests{margin-top:12px; display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:10px; align-items:stretch;}
     .tests > span{grid-column:1 / -1; color:var(--muted); margin:0 0 -2px;}
 
-    /* ===== 出力（表計算テーブル） ===== */
     .result{ margin-top:14px; padding:16px; background:var(--panel2); border:1px solid var(--border); border-radius:14px; font-size:15px; line-height:1.65; letter-spacing:.2px; white-space:normal; }
     .y{ color:var(--y); font-weight:600; }
+    .danger{ color:#ff6b6b; font-weight:700; }
 
     .table-wrap{ margin-top:12px; background:var(--panel2); border:1px solid var(--border); border-radius:12px; overflow:auto; }
     .table{ width:100%; min-width:760px; border-collapse:separate; border-spacing:0; font-size:15px; line-height:1.5; }
@@ -96,69 +87,48 @@
     .table tr:last-child td{ border-bottom:none; }
     .subtle{ color:var(--muted); }
 
-    @media (max-width:560px){
-      .settings{ grid-template-columns: 1fr; }
-    }
-    /* 追加：黄色の強調ボタン（演算用） */
-.btn-calc{
-  background:#facc15;     /* yellow-400 */
-  color:#111;
-}
-.btn-calc:hover{
-  background:#eab308;     /* yellow-500 */
-}
-
-/* 追加：出力で不足を赤強調 */
-.danger{
-  color:#ff6b6b;
-  font-weight:700;
-}
-
+    @media (max-width:560px){ .settings{ grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
   <h1>帯鋸演算</h1>
   <div class="unit-note">（長さ単位：mm）</div>
 
-  <!-- ===== 上部：設定（2列） ===== -->
+  <!-- 設定 -->
   <div class="settings">
     <div class="s-row">
       <label class="s-label" for="stockLength">部材長</label>
-      <div><input type="number" id="stockLength" value="1000"></div>
+      <div><input type="number" id="stockLength" value="1000" step="0.1" inputmode="decimal"></div>
     </div>
-
     <div class="s-row">
       <label class="s-label" for="stockCount">個数</label>
-      <div><input type="number" id="stockCount" value="10"></div>
+      <div><input type="number" id="stockCount" value="10" step="1" inputmode="numeric"></div>
     </div>
-
     <div class="s-row">
       <label class="s-label" for="grip">掴みしろ</label>
-      <div><input type="number" id="grip" value="129"></div>
+      <div><input type="number" id="grip" value="129" step="0.1" inputmode="decimal"></div>
     </div>
-
     <div class="s-row">
       <label class="s-label" for="tolerance">切断誤差</label>
-      <div><input type="number" id="tolerance" value="1"></div>
+      <div><input type="number" id="tolerance" value="1" step="0.1" inputmode="decimal"></div>
     </div>
-
     <div class="s-span-2">
       <label class="s-label" for="kerf">1カットの削れ</label>
-      <div><input type="number" id="kerf" value="2.5"></div>
+      <div><input type="number" id="kerf" value="2.5" step="0.1" inputmode="decimal"></div>
     </div>
   </div>
 
-  <!-- ===== 切断長さと本数 ===== -->
+  <!-- 切断長/個数 -->
   <h3>切断長と個数（MAX30）</h3>
   <div class="input-sheet">
     <div class="sheet-head"><div>長さ</div><div>個数</div></div>
     <div id="cutInputs"></div>
   </div>
 
-<div class="btn-row">
-  <button class="btn" onclick="addCutInput()">切断パターン追加</button>
-  <button class="btn btn-calc" onclick="calculate()">演算</button>
-</div>
+  <div class="btn-row">
+    <button class="btn" onclick="addCutInput()">切断パターン追加</button>
+    <button class="btn btn-calc" onclick="calculate()">演算</button>
+  </div>
 
   <div class="tests">
     <span>■ テストケース：</span>
@@ -170,36 +140,32 @@
 
   <div class="result" id="result"></div>
 
-  <audio id="beep" src="beep.mp3"></audio>
-
   <script>
-    // --- ガード: 重複定義の回避（ホットリロード等対策） ---
+    // 重複定義ガード
     if (!window.__OBIKYO__) window.__OBIKYO__ = {};
-
     if (!window.__OBIKYO__.initialized) {
       window.__OBIKYO__.initialized = true;
       window.__OBIKYO__.cutRowCount = 0;
 
-      // 入力行追加（最大30）— 長さ/本数を2セルで
-      window.addCutInput = function addCutInput(length = "", qty = "") {
+      // 行追加（最大30）
+      window.addCutInput = function(length = "", qty = ""){
         const maxRows = 30;
         if (window.__OBIKYO__.cutRowCount >= maxRows) return;
         const row = document.createElement('div');
         row.className = 'cut-input';
         row.innerHTML = `
-          <input type="number" class="length" placeholder="長さ" aria-label="長さ(mm)" value="${length}">
-          <input type="number" class="qty" placeholder="本数" aria-label="本数(本)" value="${qty}">
+          <input type="number" class="length" placeholder="長さ" aria-label="長さ(mm)" value="${length}" step="0.1" inputmode="decimal">
+          <input type="number" class="qty" placeholder="個数" aria-label="個数(本)" value="${qty}" step="1" inputmode="numeric">
         `;
         document.getElementById('cutInputs').appendChild(row);
         window.__OBIKYO__.cutRowCount++;
-      }
+      };
 
-      function beep(){ const a=document.getElementById('beep'); if(a){ a.currentTime=0; a.play().catch(()=>{});} }
-// システム依存の通知（アラート＋可能ならバイブ）
-function alertError(msg){
-  try { alert(msg); } catch(e){}
-  if (navigator.vibrate) { navigator.vibrate(240); }
-}
+      // 不足時の通知（システム依存：alert + 可能ならバイブ）
+      function alertError(msg){
+        try { alert(msg); } catch(e){}
+        if (navigator.vibrate) { navigator.vibrate(240); }
+      }
 
       function buildCuts(tolerance){
         const lengths=[...document.querySelectorAll('.length')];
@@ -279,7 +245,6 @@ function alertError(msg){
         ranges.push(start===prev?`${start}`:`${start}〜${prev}`); return ranges.join(',');
       }
 
-      // ===== 出力（表計算テーブル：小数1桁固定＆機械設定/本数は黄色） =====
       function renderOutput(boards,shortageMap,stockLength,grip,audit){
         const SL=Number(stockLength), GR=Number(grip);
 
@@ -319,36 +284,34 @@ function alertError(msg){
         }
 
         const tableHtml=`
-        <div class="table-wrap">
-          <table class="table">
-            <thead>
-              <tr>
-                <th>部材</th>
-                <th class="num">実長</th>
-                <th class="num">機械設定</th>
-                <th class="num">本数</th>
-                <th class="num">余り</th>
-                <th class="num">有効残長</th>
-                <th class="num">実使用長</th>
-                <th class="num">削れ合計</th>
-              </tr>
-            </thead>
-            <tbody>${rowsHtml || `<tr><td colspan="8" class="subtle">切断結果がありません</td></tr>`}</tbody>
-          </table>
-        </div>`;
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>部材</th>
+                  <th class="num">実長</th>
+                  <th class="num">機械設定</th>
+                  <th class="num">本数</th>
+                  <th class="num">余り</th>
+                  <th class="num">有効残長</th>
+                  <th class="num">実使用長</th>
+                  <th class="num">削れ合計</th>
+                </tr>
+              </thead>
+              <tbody>${rowsHtml || `<tr><td colspan="8" class="subtle">切断結果がありません</td></tr>`}</tbody>
+            </table>
+          </div>`;
 
-const keys = Array.from(shortageMap.keys()).sort((a,b)=>a-b);
-let below = `<div style="margin-top:8px">合計余り（掴みしろ含む・全材）：<b>${totalRemainInclGrip.toFixed(1)} mm</b></div>`;
-if (keys.length > 0) {
-  // ★ 不足を赤表示
-  below += `<div style="margin-top:6px"><b class="danger">切断不足：</b>` +
-           keys.map(k => ` <span class="danger">${Number(k).toFixed(1)}mm × ${shortageMap.get(k)}本</span>`).join(' / ')
-           + `</div>`;
-  // ★ ポップアップ＆システム依存のエラー通知
-  alertError('切断不足があります。入力や条件をご確認ください。');
-} else {
-  below += `<div style="margin-top:6px"><b>切断不足：</b>なし</div>`;
-}
+        const keys = Array.from(shortageMap.keys()).sort((a,b)=>a-b);
+        let below = `<div style="margin-top:8px">合計余り（掴みしろ含む・全材）：<b>${totalRemainInclGrip.toFixed(1)} mm</b></div>`;
+        if (keys.length > 0) {
+          below += `<div style="margin-top:6px"><b class="danger">切断不足：</b>` +
+                   keys.map(k => ` <span class="danger">${Number(k).toFixed(1)}mm × ${shortageMap.get(k)}本</span>`).join(' / ')
+                   + `</div>`;
+          alertError('切断不足があります。入力や条件をご確認ください。');
+        } else {
+          below += `<div style="margin-top:6px"><b>切断不足：</b>なし</div>`;
+        }
         below += `<div style="margin-top:8px" class="subtle">
           --- 監査 ---　要求 ${audit.demandUsage.toFixed(1)}mm ／ 容量 ${audit.totalCapacity.toFixed(1)}mm ／ 実割当 ${audit.assignedUsage.toFixed(1)}mm ／ 不足発生 ${audit.demandUsage>audit.totalCapacity?'はい':'いいえ'}
         </div>`;
@@ -356,8 +319,7 @@ if (keys.length > 0) {
         document.getElementById('result').innerHTML = tableHtml + below;
       }
 
-      // ===== メイン処理（ロジックは従来どおり） =====
-      window.calculate = function calculate(){
+      window.calculate = function(){
         const stockLength=Number(document.getElementById('stockLength').value);
         const stockCount=Number(document.getElementById('stockCount').value);
         const grip=Number(document.getElementById('grip').value);
@@ -389,9 +351,12 @@ if (keys.length > 0) {
 
         const audit={ demandUsage:demand.totalUsage, totalCapacity, assignedUsage:assigned.totalUsage };
         renderOutput(boards,shortageMap,stockLength,grip,audit);
-      }
+      };
 
-      window.resetCuts=function(){ document.getElementById('cutInputs').innerHTML=''; window.__OBIKYO__.__cutRowCount=0; }
+      window.resetCuts = function(){
+        document.getElementById('cutInputs').innerHTML = '';
+        window.__OBIKYO__.cutRowCount = 0; // ← タイポ修正（__cutRowCount -> cutRowCount）
+      };
 
       window.loadTest=function(id){
         window.resetCuts?.();
@@ -401,15 +366,15 @@ if (keys.length > 0) {
         else if(id===3){ L('stockLength').value=1000; L('stockCount').value=2; L('grip').value=120; L('kerf').value=3; L('tolerance').value=0; addCutInput(600,1); addCutInput(300,2); }
         else if(id===4){ L('stockLength').value=1000; L('stockCount').value=10; L('grip').value=129; L('kerf').value=2.5; L('tolerance').value=1; addCutInput(400,10); addCutInput(100,30); addCutInput(60,40); }
         calculate();
-      }
+      };
 
-      // 初期：入力行3つ
+      // 初期行
       for(let i=0;i<3;i++) addCutInput();
     }
   </script>
 
   <script>
-    // --- PWA: Service Worker 登録（対応ブラウザのみ） ---
+    // PWA: Service Worker
     if('serviceWorker' in navigator){
       window.addEventListener('load',()=>{ navigator.serviceWorker.register('./sw.js').catch(console.error); });
     }
