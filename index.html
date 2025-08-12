@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>帯鋸演算</title>
 
-  <!-- PWA meta -->
+  <!-- PWA meta（必要なら manifest.json / sw.js を配置） -->
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#2563eb">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -18,11 +18,12 @@
     :root{
       --bg:#111; --bg2:#0c0c0c; --panel:#181818; --panel2:#1f1f1f;
       --text:#fafafa; --muted:#c7c7c7; --border:#2b2b2b;
-      --brand:#2f6dff; --brand2:#2455cc; --danger:#ff6b6b;
+      --brand:#2f6dff; --brand2:#2455cc;
+      --danger:#ff6b6b; --warn:#facc15; --warn2:#eab308; --purple:#8b5cf6; --purple2:#7c3aed;
       --input-bg:#2a2a2a; --input-bg-focus:#343434;
-      --y:#ffd54f;
+      --y:#ffd54f; /* 機械設定・個数(黄色) */
       --radius:12px;
-      --label-w:88px;
+      --label-w:96px;
       --input-w:8ch; /* 00000.0 が入る幅 */
     }
     html,body{background:linear-gradient(180deg,var(--bg),var(--bg2) 60%); color:var(--text);}
@@ -34,6 +35,7 @@
     h1{margin:0 0 10px; font-size:20px; line-height:1.25; font-weight:700;}
     .unit-note{color:var(--muted); font-size:13px; margin:0 0 12px;}
 
+    /* 設定エリア */
     .settings{
       background:var(--panel2); border:1px solid var(--border); border-radius:12px; padding:12px;
       display:grid; grid-template-columns: 1fr 1fr; gap:12px 16px;
@@ -42,6 +44,7 @@
     .s-span-2{ grid-column:1 / -1; display:grid; grid-template-columns: var(--label-w) auto; align-items:center; gap:6px 8px; }
     .s-label{ color:var(--muted); font-size:14px; }
     .s-row > div, .s-span-2 > div{ display:inline-flex; align-items:center; gap:6px; flex-wrap:nowrap; }
+    .unit{ color:var(--muted); font-size:13px; white-space:nowrap; line-height:1; }
 
     input{
       width:var(--input-w); max-width:100%;
@@ -52,6 +55,7 @@
     }
     input:focus{ outline:none; background:var(--input-bg-focus); border-color:#3e3e3e; }
 
+    /* 切断入力（表計算風） */
     h3{margin:16px 0 10px; font-size:16px;}
     .input-sheet{ background:var(--panel2); border:1px solid var(--border); border-radius:12px; padding:10px; }
     .sheet-head{ display:grid; grid-template-columns: 1fr 1fr; gap:8px 16px; padding:2px 2px 8px; color:var(--muted); font-size:13px; }
@@ -59,24 +63,27 @@
     .cut-input{ display:contents; }
     .cut-input .length, .cut-input .qty{ width:var(--input-w); }
 
+    /* ボタン */
     .btn{
       background:var(--brand); color:#fff; border:none; border-radius:var(--radius);
       cursor:pointer; padding:12px 16px; font-size:16px; min-height:44px; line-height:1.2;
       box-shadow:0 2px 10px rgba(0,0,0,.35);
     }
     .btn:hover{ background:var(--brand2); }
-    .btn-row{ display:grid; grid-template-columns: repeat(2, minmax(160px,1fr)); gap:10px; margin-top:10px; }
+    .btn-row{ display:grid; grid-template-columns: repeat(3, minmax(140px,1fr)); gap:10px; margin-top:10px; }
 
-    /* 演算ボタン：黄色 */
-    .btn-calc{ background:#facc15; color:#111; }
-    .btn-calc:hover{ background:#eab308; }
+    .btn-calc{ background:var(--warn); color:#111; }
+    .btn-calc:hover{ background:var(--warn2); }
+    .btn-reset{ background:#ef4444; }      /* 赤 */
+    .btn-reset:hover{ background:#dc2626; }
+    .btn-ura{ background:var(--purple); }  /* 紫 */
+    .btn-ura:hover{ background:var(--purple2); }
 
-    .tests{margin-top:12px; display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:10px; align-items:stretch;}
-    .tests > span{grid-column:1 / -1; color:var(--muted); margin:0 0 -2px;}
-
+    /* 出力テーブル */
     .result{ margin-top:14px; padding:16px; background:var(--panel2); border:1px solid var(--border); border-radius:14px; font-size:15px; line-height:1.65; letter-spacing:.2px; white-space:normal; }
     .y{ color:var(--y); font-weight:600; }
-    .danger{ color:#ff6b6b; font-weight:700; }
+    .danger{ color:var(--danger); font-weight:700; }
+    .subtle{ color:var(--muted); }
 
     .table-wrap{ margin-top:12px; background:var(--panel2); border:1px solid var(--border); border-radius:12px; overflow:auto; }
     .table{ width:100%; min-width:760px; border-collapse:separate; border-spacing:0; font-size:15px; line-height:1.5; }
@@ -85,40 +92,46 @@
     .num{ text-align:right; font-variant-numeric:tabular-nums; }
     .group-head{ font-weight:600; }
     .table tr:last-child td{ border-bottom:none; }
-    .subtle{ color:var(--muted); }
 
     @media (max-width:560px){ .settings{ grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
   <h1>帯鋸演算</h1>
-  <div class="unit-note">（長さ単位：mm）</div>
+  <div class="unit-note">（長さ単位：mm／入力は小数1桁推奨）</div>
 
   <!-- 設定 -->
   <div class="settings">
     <div class="s-row">
       <label class="s-label" for="stockLength">部材長</label>
-      <div><input type="number" id="stockLength" value="1000" step="0.1" inputmode="decimal"></div>
+      <div><input type="number" id="stockLength" value="1000" step="0.1" inputmode="decimal"><span class="unit">mm</span></div>
     </div>
     <div class="s-row">
       <label class="s-label" for="stockCount">個数</label>
-      <div><input type="number" id="stockCount" value="10" step="1" inputmode="numeric"></div>
+      <div><input type="number" id="stockCount" value="10" step="1" inputmode="numeric"><span class="unit">本</span></div>
     </div>
     <div class="s-row">
       <label class="s-label" for="grip">掴みしろ</label>
-      <div><input type="number" id="grip" value="129" step="0.1" inputmode="decimal"></div>
+      <div><input type="number" id="grip" value="129" step="0.1" inputmode="decimal"><span class="unit">mm</span></div>
     </div>
     <div class="s-row">
-      <label class="s-label" for="tolerance">切断誤差</label>
+      <label class="s-label" for="tolerance">切断誤差(+mm)</label>
       <div><input type="number" id="tolerance" value="1" step="0.1" inputmode="decimal"></div>
     </div>
-    <div class="s-span-2">
-      <label class="s-label" for="kerf">1カットの削れ</label>
-      <div><input type="number" id="kerf" value="2.5" step="0.1" inputmode="decimal"></div>
+    <div class="s-row">
+      <label class="s-label" for="kerf">1カット削れ</label>
+      <div><input type="number" id="kerf" value="2.5" step="0.1" inputmode="decimal"><span class="unit">mm</span></div>
     </div>
+    <!-- ★ 追加：裏モード用 余り(目標) -->
+    <div class="s-row">
+      <label class="s-label" for="spareTarget">余り(目標)</label>
+      <div><input type="number" id="spareTarget" placeholder="例:160" step="0.1" inputmode="decimal"><span class="unit">mm</span></div>
+    </div>
+
+    <div class="s-span-2 subtle">※「余り(目標)」は<strong>裏モード</strong>でのみ使用します（掴みしろより大きい値を指定）。</div>
   </div>
 
-  <!-- 切断長/個数 -->
+  <!-- 切断入力 -->
   <h3>切断長と個数（MAX30）</h3>
   <div class="input-sheet">
     <div class="sheet-head"><div>長さ</div><div>個数</div></div>
@@ -127,7 +140,11 @@
 
   <div class="btn-row">
     <button class="btn" onclick="addCutInput()">切断パターン追加</button>
-    <button class="btn btn-calc" onclick="calculate()">演算</button>
+    <button class="btn btn-calc" onclick="calculate('normal')">演算</button>
+    <button class="btn btn-reset" onclick="resetAll()">リセット</button>
+  </div>
+  <div class="btn-row" style="grid-template-columns: 1fr;">
+    <button class="btn btn-ura" onclick="calculate('ura')">裏モード（余り優先・捨て切り自動）</button>
   </div>
 
   <div class="tests">
@@ -141,16 +158,20 @@
   <div class="result" id="result"></div>
 
   <script>
-    // 重複定義ガード
-    if (!window.__OBIKYO__) window.__OBIKYO__ = {};
-    if (!window.__OBIKYO__.initialized) {
+    // ===== ユーティリティ =====
+    const r1 = (x)=> (Math.round((+x)*10)/10); // 小数1桁丸め
+    function alertError(msg){ try{ alert(msg); }catch(e){} if(navigator.vibrate){ navigator.vibrate(240); } }
+
+    // ===== ガード =====
+    if(!window.__OBIKYO__) window.__OBIKYO__ = {};
+    if(!window.__OBIKYO__.initialized){
       window.__OBIKYO__.initialized = true;
       window.__OBIKYO__.cutRowCount = 0;
 
       // 行追加（最大30）
-      window.addCutInput = function(length = "", qty = ""){
+      window.addCutInput = function(length="", qty=""){
         const maxRows = 30;
-        if (window.__OBIKYO__.cutRowCount >= maxRows) return;
+        if(window.__OBIKYO__.cutRowCount >= maxRows) return;
         const row = document.createElement('div');
         row.className = 'cut-input';
         row.innerHTML = `
@@ -161,11 +182,22 @@
         window.__OBIKYO__.cutRowCount++;
       };
 
-      // 不足時の通知（システム依存：alert + 可能ならバイブ）
-      function alertError(msg){
-        try { alert(msg); } catch(e){}
-        if (navigator.vibrate) { navigator.vibrate(240); }
-      }
+      window.resetCuts = function(){
+        document.getElementById('cutInputs').innerHTML = '';
+        window.__OBIKYO__.cutRowCount = 0;
+      };
+
+      window.resetAll = function(){
+        document.getElementById('stockLength').value = 1000;
+        document.getElementById('stockCount').value = 10;
+        document.getElementById('grip').value = 129;
+        document.getElementById('tolerance').value = 1;
+        document.getElementById('kerf').value = 2.5;
+        document.getElementById('spareTarget').value = '';
+        resetCuts();
+        for(let i=0;i<3;i++) addCutInput();
+        document.getElementById('result').innerHTML = '';
+      };
 
       function buildCuts(tolerance){
         const lengths=[...document.querySelectorAll('.length')];
@@ -175,30 +207,32 @@
           const target=Number(lengths[i].value);
           const qty=Number(qtys[i].value);
           if(!target||!qty) continue;
-          const input=target-Number(tolerance); // 誤差+1 → 設定を1短く
-          for(let j=0;j<qty;j++) cuts.push({target,input});
+          const input=r1(target-Number(tolerance)); // 機械設定＝実長-誤差
+          for(let j=0;j<qty;j++) cuts.push({ target:r1(target), input:r1(input) });
         }
         return cuts;
       }
 
-      function statsFromCuts(cuts,kerf){
+      function statsFromCuts(cuts, kerf){
         const map=new Map(); let totalCuts=0,totalUsage=0;
         for(const c of cuts){ map.set(c.target,(map.get(c.target)||0)+1); totalCuts++; totalUsage+=(c.target+kerf); }
-        return {countByTarget:map,totalCuts,totalUsage};
+        return { countByTarget:map, totalCuts, totalUsage };
       }
 
-      function assignBoardsDescending(cuts,stockLength,stockCount,grip,kerf){
+      function assignBoardsDescending(cuts, stockLength, stockCount, grip, kerf){
         const boards=Array.from({length:stockCount},(_,i)=>({id:i+1,cuts:[],used:0}));
         let remaining=cuts.slice().sort((a,b)=>b.target-a.target);
+
         const CANDIDATE_LIMIT=60, NODE_LIMIT=20000;
         for(const board of boards){
           if(remaining.length===0) break;
           const capacity=stockLength-grip;
           const pool=remaining.slice(0,Math.min(CANDIDATE_LIMIT,remaining.length));
+
           let bestPlan=[],bestUsed=0,nodes=0;
           function dfs(idx,used,chosen){
             if(++nodes>NODE_LIMIT) return;
-            if(used>bestUsed){bestUsed=used;bestPlan=chosen.slice();}
+            if(used>bestUsed){ bestUsed=used; bestPlan=chosen.slice(); }
             for(let i=idx;i<pool.length;i++){
               const c=pool[i], need=c.target+kerf;
               if(used+need>capacity) continue;
@@ -211,17 +245,17 @@
           const set=new Set(bestPlan);
           remaining=remaining.filter(x=>!set.has(x));
         }
-        return {boards,remaining};
+        return { boards, remaining };
       }
 
-      function gapFill(boards,remaining,stockLength,grip,kerf){
+      function gapFill(boards, remaining, stockLength, grip, kerf){
         remaining.sort((a,b)=>a.target-b.target);
         for(const board of boards){
           let cap=(stockLength-grip)-board.used; if(cap<=0) continue;
           for(let i=0;i<remaining.length && cap>0;){
             const c=remaining[i], need=c.target+kerf;
-            if(need<=cap+1e-9){ board.cuts.push(c); board.used+=need; cap-=need; remaining.splice(i,1);}
-            else break;
+            if(need<=cap+1e-9){ board.cuts.push(c); board.used+=need; cap-=need; remaining.splice(i,1); }
+            else break; // 最短でも入らない
           }
           const capMax=stockLength-grip; if(board.used>capMax) board.used=capMax;
         }
@@ -232,20 +266,55 @@
         const map=new Map();
         for(const c of cuts){
           const key=`${c.input}->${c.target}`;
-          if(!map.has(key)) map.set(key,{input:c.input,target:c.target,count:0});
+          if(!map.has(key)) map.set(key,{ input:c.input, target:c.target, count:0, meta:c.meta||'' });
           map.get(key).count++;
         }
-        return Array.from(map.values()).sort((a,b)=>a.target-b.target||a.input-b.input);
+        // 捨て切り（meta）を後ろにせず、実長昇順→機械設定昇順
+        return Array.from(map.values()).sort((a,b)=> a.target-b.target || a.input-b.input );
       }
 
       function compressIds(ids){
-        ids.sort((a,b)=>a-b); const ranges=[]; let start=ids[0],prev=ids[0];
-        for(let i=1;i<ids.length;i++){ const cur=ids[i]; if(cur===prev+1){prev=cur;continue;}
-          ranges.push(start===prev?`${start}`:`${start}〜${prev}`); start=prev=cur;}
-        ranges.push(start===prev?`${start}`:`${start}〜${prev}`); return ranges.join(',');
+        ids.sort((a,b)=>a-b);
+        const ranges=[]; let start=ids[0], prev=ids[0];
+        for(let i=1;i<ids.length;i++){
+          const cur=ids[i];
+          if(cur===prev+1){ prev=cur; continue; }
+          ranges.push(start===prev?`${start}`:`${start}〜${prev}`); start=prev=cur;
+        }
+        ranges.push(start===prev?`${start}`:`${start}〜${prev}`);
+        return ranges.join(',');
       }
 
-      function renderOutput(boards,shortageMap,stockLength,grip,audit){
+      // ★ 裏モード：各部材ごとに「余り(目標)」になるよう捨て切り1本を自動挿入
+      function applyUraMode(boards, stockLength, grip, kerf, tolerance, spareTarget){
+        if(!spareTarget || isNaN(spareTarget)) return;
+        const SL=r1(stockLength), GR=r1(grip), K=r1(kerf), T=r1(tolerance), S=r1(spareTarget);
+        if(S <= GR){ alertError('余り(目標)は掴みしろより大きい値を指定してください。'); return; }
+
+        for(const board of boards){
+          const used = board.used;                              // すでに(実長+削れ)で加算済み
+          const rIn  = r1(SL - used);                          // 掴みしろ含む残長
+          const rEx  = r1((SL - GR) - used);                   // 有効残長
+          if(rEx < 50) continue;                               // 有効残長が50未満なら対象外
+          if(rIn <= S + 0.05) continue;                        // 既に目標以下なら不要
+
+          const excess = r1(rIn - S);                          // 目標より多い分
+          const scrapActual = r1(excess - K);                   // 1カット分の削れを差し引いた実長
+          if(scrapActual <= 0) continue;
+
+          // 容量超過安全チェック（理論上は超えないが念のため）
+          const need = r1(scrapActual + K);
+          const capMax = r1(SL - GR);
+          if(board.used + need > capMax + 1e-6) continue;
+
+          const input = r1(scrapActual - T);                    // 機械設定（誤差補正）
+          board.cuts.push({ target:scrapActual, input, meta:'URAMODE' });
+          board.used = r1(board.used + need);
+        }
+      }
+
+      // ===== 出力（表計算テーブル） =====
+      function renderOutput(boards, shortageMap, stockLength, grip, audit){
         const SL=Number(stockLength), GR=Number(grip);
 
         const sigMap=new Map();
@@ -269,11 +338,14 @@
             const inp=Number(row.input).toFixed(1);
             const tgt=Number(row.target).toFixed(1);
             const qty=row.count;
+            // 実使用長＝実長×本数（捨て切りも同様に扱う）
             const usedLen=(Number(row.target)*qty).toFixed(1);
+            // 削れ合計＝kerf×本数（捨て切りも同様）
             const kerfSum=(qty*Number(document.getElementById('kerf').value)).toFixed(1);
+
             rowsHtml += `<tr>
               ${idx===0?`<td class="group-head" rowspan="${tally.length}">${groupLabel}</td>`:``}
-              <td class="num">${tgt}</td>
+              <td class="num">${tgt}${row.meta==='URAMODE' ? ' <span class="subtle">(捨て切り)</span>' : ''}</td>
               <td class="num y">${inp}</td>
               <td class="num y">${qty}</td>
               ${idx===0?remainCell:``}
@@ -302,12 +374,11 @@
             </table>
           </div>`;
 
-        const keys = Array.from(shortageMap.keys()).sort((a,b)=>a-b);
-        let below = `<div style="margin-top:8px">合計余り（掴みしろ含む・全材）：<b>${totalRemainInclGrip.toFixed(1)} mm</b></div>`;
-        if (keys.length > 0) {
+        const keys=Array.from(shortageMap.keys()).sort((a,b)=>a-b);
+        let below=`<div style="margin-top:8px">合計余り（掴みしろ含む・全材）：<b>${Number(totalRemainInclGrip).toFixed(1)} mm</b></div>`;
+        if(keys.length>0){
           below += `<div style="margin-top:6px"><b class="danger">切断不足：</b>` +
-                   keys.map(k => ` <span class="danger">${Number(k).toFixed(1)}mm × ${shortageMap.get(k)}本</span>`).join(' / ')
-                   + `</div>`;
+                   keys.map(k=>` <span class="danger">${Number(k).toFixed(1)}mm × ${shortageMap.get(k)}本</span>`).join(' / ') + `</div>`;
           alertError('切断不足があります。入力や条件をご確認ください。');
         } else {
           below += `<div style="margin-top:6px"><b>切断不足：</b>なし</div>`;
@@ -319,12 +390,16 @@
         document.getElementById('result').innerHTML = tableHtml + below;
       }
 
-      window.calculate = function(){
-        const stockLength=Number(document.getElementById('stockLength').value);
+      // ===== メイン =====
+      window.calculate = function(mode='normal'){
+        const stockLength=r1(document.getElementById('stockLength').value);
         const stockCount=Number(document.getElementById('stockCount').value);
-        const grip=Number(document.getElementById('grip').value);
-        const kerf=Number(document.getElementById('kerf').value);
-        const tolerance=Number(document.getElementById('tolerance').value);
+        const grip=r1(document.getElementById('grip').value);
+        const kerf=r1(document.getElementById('kerf').value);
+        const tolerance=r1(document.getElementById('tolerance').value);
+        const spareTargetVal = document.getElementById('spareTarget').value;
+        const spareTarget = spareTargetVal==='' ? null : r1(spareTargetVal);
+
         document.getElementById('result').textContent='';
 
         const cuts=buildCuts(tolerance);
@@ -336,6 +411,11 @@
 
         const {boards,remaining}=assignBoardsDescending(cuts,stockLength,stockCount,grip,kerf);
         const afterGap=gapFill(boards,remaining,stockLength,grip,kerf);
+
+        // ★ 裏モード（余り優先・捨て切り自動）
+        if(mode==='ura'){
+          applyUraMode(boards, stockLength, grip, kerf, tolerance, spareTarget);
+        }
 
         const assignedCutsArray=boards.flatMap(b=>b.cuts);
         const assigned=statsFromCuts(assignedCutsArray,kerf);
@@ -353,28 +433,25 @@
         renderOutput(boards,shortageMap,stockLength,grip,audit);
       };
 
-      window.resetCuts = function(){
-        document.getElementById('cutInputs').innerHTML = '';
-        window.__OBIKYO__.cutRowCount = 0; // ← タイポ修正（__cutRowCount -> cutRowCount）
-      };
-
       window.loadTest=function(id){
-        window.resetCuts?.();
+        resetAll();
         const L=(v)=>document.getElementById(v);
         if(id===1){ L('stockLength').value=1000; L('stockCount').value=3; L('grip').value=129; L('kerf').value=2.5; L('tolerance').value=1; addCutInput(400,2); addCutInput(100,4); }
         else if(id===2){ L('stockLength').value=1000; L('stockCount').value=1; L('grip').value=100; L('kerf').value=2.5; L('tolerance').value=1; addCutInput(200,5); }
         else if(id===3){ L('stockLength').value=1000; L('stockCount').value=2; L('grip').value=120; L('kerf').value=3; L('tolerance').value=0; addCutInput(600,1); addCutInput(300,2); }
         else if(id===4){ L('stockLength').value=1000; L('stockCount').value=10; L('grip').value=129; L('kerf').value=2.5; L('tolerance').value=1; addCutInput(400,10); addCutInput(100,30); addCutInput(60,40); }
-        calculate();
+        calculate('normal');
       };
 
-      // 初期行
-      for(let i=0;i<3;i++) addCutInput();
+      // 初期状態
+      window.addEventListener('DOMContentLoaded', ()=>{
+        for(let i=0;i<3;i++) addCutInput();
+      });
     }
   </script>
 
   <script>
-    // PWA: Service Worker
+    // PWA: Service Worker（任意）
     if('serviceWorker' in navigator){
       window.addEventListener('load',()=>{ navigator.serviceWorker.register('./sw.js').catch(console.error); });
     }
