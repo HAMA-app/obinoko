@@ -34,7 +34,7 @@
       <div><input type="number" id="grip" value="129" step="0.1" inputmode="decimal"><span class="unit">mm</span></div>
     </div>
     <div class="s-row">
-      <label class="s-label" for="tolerance">切断誤差(+mm)</label>
+      <label class="s-label" for="tolerance">切断誤差±</label>
       <div><input type="number" id="tolerance" value="1" step="0.1" inputmode="decimal"></div>
     </div>
     <div class="s-row">
@@ -66,7 +66,7 @@
   <!-- カスタム保存/呼出（4枠） -->
   <div class="presets">
     <div class="presets-head">
-      <span>カスタム（4枠）</span>
+      <span>カスタム</span>
       <span class="subtle">※タップ=呼出 / 長押し=保存（上書き）/ 演算は自動実行しません</span>
     </div>
     <div class="btn-row">
@@ -79,8 +79,8 @@
 
 <!-- 追加：外部保存/読込 -->
 <div class="btn-row" style="margin-top:6px">
-  <button class="btn" id="btnExport">カスタムのエクスポート</button>
-  <button class="btn" id="btnImport">カスタムのインポート</button>
+  <button class="btn" id="btnExport">SAVE</button>
+  <button class="btn" id="btnImport">LOAD</button>
   <input type="file" id="importFile" accept="application/json" style="display:none">
 </div>
 
