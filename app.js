@@ -5,6 +5,16 @@
   const $$ = sel => [...document.querySelectorAll(sel)];
   const vibrate = ms => { if (navigator.vibrate) navigator.vibrate(ms); };
 
+  // ========= 準最適モード（隠し）フラグ =========
+  let semiMode = false; // true: 準最適モードON
+  const MAGIC = 77777.7;
+
+  function setSemiMode(on){
+    semiMode = !!on;
+    document.body.classList.toggle('semi-mode', semiMode);
+    // ※ UIでの表示やアラートは一切出さない（非公開仕様）
+  }
+
   // tap/クリックを確実に拾う
   function bindTap(el, handler) {
     if (!el) return;
@@ -187,15 +197,21 @@
     return {countByTarget:map,totalCuts,totalUsage};
   }
 
+  // === 探索（通常と準最適でパラメータだけ変える。将来ここをDP/ILPに差し替え可） ===
   function assignBoardsDescending(cuts,stockLength,stockCount,grip,kerf){
     const boards=Array.from({length:stockCount},(_,i)=>({id:i+1,cuts:[],used:0}));
     let remaining=cuts.slice().sort((a,b)=>b.target-a.target);
-    const CANDIDATE_LIMIT=60, NODE_LIMIT=20000;
+
+    // 準最適モードでは候補/ノード上限を上げて探索を深くする
+    const CANDIDATE_LIMIT = semiMode ? 120 : 60;
+    const NODE_LIMIT      = semiMode ? 100000 : 20000;
+
     for(const board of boards){
       if(remaining.length===0) break;
       const capacity=r1(stockLength-grip);
       const pool=remaining.slice(0,Math.min(CANDIDATE_LIMIT,remaining.length));
       let bestPlan=[],bestUsed=0,nodes=0;
+
       (function dfs(idx,used,chosen){
         if(++nodes>NODE_LIMIT) return;
         if(used>bestUsed){bestUsed=used;bestPlan=chosen.slice();}
@@ -307,6 +323,7 @@
     $('#result').innerHTML = tableHtml + below;
   }
 
+  // 裏モード（余り目標の捨て切り追加）
   function applyUraMode(boards, stockLength, grip, kerf, tolerance, spareTarget){
     if(!(spareTarget>0) || spareTarget<=grip) return;
     const MIN_EFFECTIVE = 50;
@@ -347,6 +364,12 @@
 
       if(secret){ applyUraMode(boards, stockLength, grip, kerf, tolerance, spareTarget); }
 
+      // 準最適モードでは、ギャップ埋めをもう一度（短尺優先→長尺優先）で再試行して微改善
+      if(semiMode){
+        remaining.sort((a,b)=>b.target-a.target);
+        remaining=gapFill(boards,remaining,stockLength,grip,kerf);
+      }
+
       const assignedCutsArray=boards.flatMap(b=>b.cuts);
       const assigned=statsFromCuts(assignedCutsArray,kerf);
 
@@ -372,7 +395,39 @@
     bindTap($('#btnAdd'),   () => addCutInput());
     bindTap($('#btnReset'), () => resetCuts());
     bindTap($('#btnCalc'),  () => run(false));
-    bindTap($('#btnUra'),   () => run(true));
+
+    // ★ 裏モードボタン：隠しコマンド＆長押し解除
+    (function bindUra(){
+      const btn = $('#btnUra');
+      if(!btn) return;
+
+      // 短押し：隠しコマンド判定 → 成立なら準最適ONにして終了 / 非成立なら通常の裏モード実行
+      bindTap(btn, () => {
+        const stockLengthVal = Number($('#stockLength').value);
+        if (stockLengthVal === MAGIC) {
+          // 準最適モードON（UI表示は出さない）
+          setSemiMode(true);
+          vibrate(30);
+          return; // 計算は行わない
+        }
+        // 通常の裏モード実行（準最適フラグは関与しない）
+        run(true);
+      });
+
+      // 長押し3秒：準最適モードOFFに戻す（何も表示しない）
+      let lpTimer=null, isDown=false;
+      const start = () => {
+        isDown = true;
+        lpTimer = setTimeout(()=>{ if(isDown){ setSemiMode(false); vibrate(50);} }, 3000);
+      };
+      const end = () => { isDown=false; if(lpTimer){ clearTimeout(lpTimer); lpTimer=null; } };
+
+      btn.addEventListener('touchstart', start, {passive:true});
+      btn.addEventListener('touchend', end);
+      btn.addEventListener('mousedown', start);
+      btn.addEventListener('mouseup', end);
+      btn.addEventListener('mouseleave', end);
+    })();
 
     // プリセット（4枠）
     $$('.btn-preset').forEach(bindLongPressPreset);
@@ -386,7 +441,7 @@
 
   document.addEventListener('DOMContentLoaded', wire);
 
-  // ====== 互換のためグローバル公開（他の古いHTMLからも呼べるように） ======
+  // ====== 互換のためグローバル公開 ======
   window.addCutInput = addCutInput;
   window.resetCuts   = resetCuts;
   window.run         = run;

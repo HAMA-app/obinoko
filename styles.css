@@ -84,3 +84,8 @@ h3{margin:16px 0 10px; font-size:16px;}
 @media (max-width:560px){
   .settings{ grid-template-columns: 1fr; }
 }
+/* === 準最適モードの背景（薄紫系） === */
+body.semi-mode{
+  /* 見た目は控えめな薄紫。必要なら色は調整してください */
+  background: linear-gradient(180deg, #1c1424, #221a2b 60%) !important;
+}
