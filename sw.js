@@ -1,5 +1,5 @@
 // sw.js
-const CACHE = "obikyo-v11"; // 版数は更新のたびに変える
+const CACHE = "obikyo-v12"; // 版数は更新のたびに変える
 const ASSETS = [
   "./",
   "./index.html",
