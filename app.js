@@ -1,73 +1,26 @@
 (() => {
-  // ====== ヘルパ ======
+  // ========= ヘルパ =========
   const r1 = v => Math.round(v * 10) / 10;
   const $ = sel => document.querySelector(sel);
   const $$ = sel => [...document.querySelectorAll(sel)];
   const vibrate = ms => { if (navigator.vibrate) navigator.vibrate(ms); };
 
-  // ====== プリセット保存（localStorage） ======
+  // tap/クリックを確実に拾う
+  function bindTap(el, handler) {
+    if (!el) return;
+    let fired = false;
+    const fn = (e) => {
+      if (fired) return;
+      fired = true;
+      try { handler(e); } finally { setTimeout(() => fired = false, 0); }
+    };
+    el.addEventListener('pointerup', fn);
+    el.addEventListener('touchend', (e)=>{ e.preventDefault(); fn(e); }, {passive:false});
+    el.addEventListener('click', fn);
+  }
+
+  // ========= プリセット保存（localStorage） =========
   const PRESET_KEY = slot => `obikyo_preset_v1_${slot}`;
-// === 既存の PRESET_KEY, savePreset, loadPreset の下あたりに追記 ===
-
-// 全プリセットをまとめて取得
-function dumpAllPresets() {
-  const slots = [1,2,3,4];
-  const data = {};
-  for (const s of slots) {
-    const raw = localStorage.getItem(PRESET_KEY(s));
-    if (raw) data[s] = JSON.parse(raw);
-  }
-  return { version: 1, exportedAt: new Date().toISOString(), data };
-}
-
-// JSONを全プリセットへ一括反映（上書き）
-function loadAllPresets(obj) {
-  if (!obj || !obj.data) throw new Error('不正なファイルです');
-  const slots = Object.keys(obj.data);
-  for (const s of slots) {
-    localStorage.setItem(PRESET_KEY(s), JSON.stringify(obj.data[s]));
-  }
-}
-
-// ダウンロードヘルパ
-function downloadText(filename, text) {
-  const blob = new Blob([text], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click();
-  a.remove(); URL.revokeObjectURL(url);
-}
-
-// クリック配線
-function wireExportImportButtons() {
-  const btnExport = document.getElementById('btnExport');
-  const btnImport = document.getElementById('btnImport');
-  const inputFile = document.getElementById('importFile');
-
-  btnExport.addEventListener('click', () => {
-    const payload = dumpAllPresets();
-    downloadText('obikyo-presets.json', JSON.stringify(payload, null, 2));
-  });
-
-  btnImport.addEventListener('click', () => inputFile.click());
-
-  inputFile.addEventListener('change', async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      const text = await file.text();
-      const obj = JSON.parse(text);
-      loadAllPresets(obj);
-      alert('インポート完了：カスタム1〜4に読み込みました。');
-    } catch (err) {
-      console.error(err);
-      alert('インポートに失敗しました。ファイルを確認してください。');
-    } finally {
-      inputFile.value = '';
-    }
-  });
-}
 
   function getUIState() {
     const cuts = [];
@@ -99,16 +52,13 @@ function wireExportImportButtons() {
     $('#kerf').value = s.kerf ?? 0;
     $('#spareTarget').value = s.spareTarget ?? '';
 
-    resetCuts(); // 既存行をクリア
+    resetCuts();
     (s.cuts || []).forEach(c => addCutInput(c.length, c.qty));
   }
 
   function savePreset(slot) {
     const state = getUIState();
-    const payload = {
-      meta: { savedAt: new Date().toISOString() },
-      state
-    };
+    const payload = { meta: { savedAt: new Date().toISOString() }, state };
     localStorage.setItem(PRESET_KEY(slot), JSON.stringify(payload));
     vibrate(80);
     alert(`カスタム${slot}に保存しました。`);
@@ -120,28 +70,23 @@ function wireExportImportButtons() {
     const data = JSON.parse(raw);
     setUIState(data.state);
     vibrate(30);
-    // 呼び出しのみ。自動演算はしない。
   }
 
-  // 長押し/短押し検出（タップ=呼出、長押し=保存）
+  // 長押し/短押し（タップ=呼出、長押し=保存）
   function bindLongPressPreset(btn) {
     let timer = null, pressed = false;
     const slot = btn.dataset.slot;
 
-    const start = (e) => {
+    const start = () => {
       pressed = true;
-      timer = setTimeout(() => {
-        pressed = false;
-        savePreset(slot);
-      }, 650); // 長押し判定
+      timer = setTimeout(() => { pressed = false; savePreset(slot); }, 650);
     };
-    const end = (e) => {
+    const end = () => {
       if (timer) clearTimeout(timer);
-      if (pressed) loadPreset(slot); // 短押し
+      if (pressed) loadPreset(slot);
       pressed = false;
     };
-
-    btn.addEventListener('touchstart', start, { passive: true });
+    btn.addEventListener('touchstart', start, {passive:true});
     btn.addEventListener('touchend', end);
     btn.addEventListener('mousedown', start);
     btn.addEventListener('mouseleave', end);
@@ -149,7 +94,58 @@ function wireExportImportButtons() {
     btn.addEventListener('click', e => e.preventDefault()); // 二重発火防止
   }
 
-  // ====== 入力行 ======
+  // === すべてのプリセットをまとめてエクスポート/インポート ===
+  function dumpAllPresets() {
+    const slots = [1,2,3,4];
+    const data = {};
+    for (const s of slots) {
+      const raw = localStorage.getItem(PRESET_KEY(s));
+      if (raw) data[s] = JSON.parse(raw);
+    }
+    return { version: 1, exportedAt: new Date().toISOString(), data };
+  }
+  function loadAllPresets(obj) {
+    if (!obj || !obj.data) throw new Error('不正なファイルです');
+    for (const s of Object.keys(obj.data)) {
+      localStorage.setItem(PRESET_KEY(s), JSON.stringify(obj.data[s]));
+    }
+  }
+  function downloadText(filename, text) {
+    const blob = new Blob([text], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
+    a.remove(); URL.revokeObjectURL(url);
+  }
+  function wireExportImportButtons() {
+    const btnExport = $('#btnExport');
+    const btnImport = $('#btnImport');
+    const inputFile = $('#importFile');
+
+    bindTap(btnExport, () => {
+      const payload = dumpAllPresets();
+      downloadText('obikyo-presets.json', JSON.stringify(payload, null, 2));
+    });
+    bindTap(btnImport, () => inputFile && inputFile.click());
+    inputFile?.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const obj = JSON.parse(text);
+        loadAllPresets(obj);
+        alert('インポート完了：カスタム1〜4に読み込みました。');
+      } catch (err) {
+        console.error(err);
+        alert('インポートに失敗しました。ファイルを確認してください。');
+      } finally {
+        inputFile.value = '';
+      }
+    });
+  }
+
+  // ========= 入力行 =========
   let cutRowCount = 0;
   function addCutInput(length = "", qty = "") {
     if (cutRowCount >= 30) return;
@@ -168,7 +164,7 @@ function wireExportImportButtons() {
     $('#result').textContent = '';
   }
 
-  // ====== 既存の演算ロジック（抜粋・統合） ======
+  // ========= 演算ロジック =========
   function alertError(msg){ try { alert(msg); } catch(e){} vibrate(240); }
 
   function buildCutsForCalc(tolerance){
@@ -311,13 +307,12 @@ function wireExportImportButtons() {
     $('#result').innerHTML = tableHtml + below;
   }
 
-  // 裏モード適用（余り(目標)へ合わせる捨て切り）
   function applyUraMode(boards, stockLength, grip, kerf, tolerance, spareTarget){
     if(!(spareTarget>0) || spareTarget<=grip) return;
     const MIN_EFFECTIVE = 50;
     for(const b of boards){
-      const rIn = r1(stockLength - b.used);           // 掴みしろ含む残長
-      const rEx = r1((stockLength - grip) - b.used);  // 有効残長
+      const rIn = r1(stockLength - b.used);
+      const rEx = r1((stockLength - grip) - b.used);
       const diff = r1(rIn - spareTarget);
       if(rEx >= MIN_EFFECTIVE && diff > kerf + 1e-9){
         const dropActual = r1(diff - kerf);
@@ -330,64 +325,69 @@ function wireExportImportButtons() {
     }
   }
 
-  // 実行（secret=trueで裏モード）
   function run(secret=false){
-    const stockLength = r1(Number($('#stockLength').value));
-    const stockCount  = Math.trunc(Number($('#stockCount').value));
-    const grip        = r1(Number($('#grip').value));
-    const kerf        = r1(Number($('#kerf').value));
-    const tolerance   = r1(Number($('#tolerance').value));
-    const spareTarget = $('#spareTarget').value===''? null : r1(Number($('#spareTarget').value));
-    $('#result').textContent='';
+    try{
+      const stockLength = r1(Number($('#stockLength').value));
+      const stockCount  = Math.trunc(Number($('#stockCount').value));
+      const grip        = r1(Number($('#grip').value));
+      const kerf        = r1(Number($('#kerf').value));
+      const tolerance   = r1(Number($('#tolerance').value));
+      const spareTarget = $('#spareTarget').value===''? null : r1(Number($('#spareTarget').value));
+      $('#result').textContent='';
 
-    const cuts=buildCutsForCalc(tolerance);
-    if(cuts.length===0 || stockCount<=0 || stockLength<=0){
-      $('#result').textContent='入力が不足しています。'; return;
-    }
-    const demand=statsFromCuts(cuts,kerf);
-    const totalCapacity=r1((stockLength-grip)*stockCount);
-
-    let {boards,remaining}=assignBoardsDescending(cuts,stockLength,stockCount,grip,kerf);
-    remaining=gapFill(boards,remaining,stockLength,grip,kerf);
-
-    if(secret){ applyUraMode(boards, stockLength, grip, kerf, tolerance, spareTarget); }
-
-    const assignedCutsArray=boards.flatMap(b=>b.cuts);
-    const assigned=statsFromCuts(assignedCutsArray,kerf);
-
-    const shortageMap=new Map();
-    for(const c of remaining) shortageMap.set(c.target,(shortageMap.get(c.target)||0)+1);
-    if(shortageMap.size===0){
-      for(const [t,need] of demand.countByTarget.entries()){
-        const done=assigned.countByTarget.get(t)||0;
-        if(done<need) shortageMap.set(t,need-done);
+      const cuts=buildCutsForCalc(tolerance);
+      if(cuts.length===0 || stockCount<=0 || stockLength<=0){
+        $('#result').textContent='入力が不足しています。'; return;
       }
+      const demand=statsFromCuts(cuts,kerf);
+      const totalCapacity=r1((stockLength-grip)*stockCount);
+
+      let {boards,remaining}=assignBoardsDescending(cuts,stockLength,stockCount,grip,kerf);
+      remaining=gapFill(boards,remaining,stockLength,grip,kerf);
+
+      if(secret){ applyUraMode(boards, stockLength, grip, kerf, tolerance, spareTarget); }
+
+      const assignedCutsArray=boards.flatMap(b=>b.cuts);
+      const assigned=statsFromCuts(assignedCutsArray,kerf);
+
+      const shortageMap=new Map();
+      for(const c of remaining) shortageMap.set(c.target,(shortageMap.get(c.target)||0)+1);
+      if(shortageMap.size===0){
+        for(const [t,need] of demand.countByTarget.entries()){
+          const done=assigned.countByTarget.get(t)||0;
+          if(done<need) shortageMap.set(t,need-done);
+        }
+      }
+      const audit={ demandUsage:demand.totalUsage, totalCapacity, assignedUsage:assigned.totalUsage };
+      renderOutput(boards,shortageMap,stockLength,grip,audit);
+    }catch(err){
+      console.error('run() failed:', err);
+      alertError('演算中にエラーが発生しました。入力を確認してください。');
     }
-    const audit={ demandUsage:demand.totalUsage, totalCapacity, assignedUsage:assigned.totalUsage };
-    renderOutput(boards,shortageMap,stockLength,grip,audit);
   }
 
-  // ====== イベント配線 ======
+  // ========= イベント配線 =========
   function wire() {
-    $('#btnAdd').addEventListener('click', () => addCutInput());
-    $('#btnReset').addEventListener('click', () => resetCuts());
-    $('#btnCalc').addEventListener('click', () => run(false));
-    $('#btnUra').addEventListener('click', () => run(true));
+    // 操作ボタン（tap/click対応）
+    bindTap($('#btnAdd'),   () => addCutInput());
+    bindTap($('#btnReset'), () => resetCuts());
+    bindTap($('#btnCalc'),  () => run(false));
+    bindTap($('#btnUra'),   () => run(true));
 
-    // プリセット（4枠）に長押し/短押しバインド
+    // プリセット（4枠）
     $$('.btn-preset').forEach(bindLongPressPreset);
 
-    // 初期：空行は作らない（必要なら追加）
+    // エクスポート/インポート
+    wireExportImportButtons();
+
+    // 初期行（3行）
     for (let i = 0; i < 3; i++) addCutInput();
   }
-function wire() {
-  // ...既存のイベント配線...
-  $$('.btn-preset').forEach(bindLongPressPreset);
-  for (let i = 0; i < 3; i++) addCutInput();
-
-  // 追加：外部保存/読込
-  wireExportImportButtons();
-}
 
   document.addEventListener('DOMContentLoaded', wire);
+
+  // ====== 互換のためグローバル公開（他の古いHTMLからも呼べるように） ======
+  window.addCutInput = addCutInput;
+  window.resetCuts   = resetCuts;
+  window.run         = run;
 })();
