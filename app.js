@@ -14,6 +14,46 @@
     document.body.classList.toggle('semi-mode', semiMode);
     // ※ UIでの表示やアラートは一切出さない（非公開仕様）
   }
+// ========= Sound Manager (iOS対応：初回タップで解禁) =========
+const AudioMgr = (() => {
+  let ctx, unlocked = false;
+  function ensure() {
+    if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+    return ctx;
+  }
+  function unlockOnce() {
+    if (unlocked) return;
+    try { ensure().resume(); unlocked = true; } catch (e) {}
+  }
+  // 汎用ビープ
+  function beep(freq=880, ms=180, type='sine', vol=0.22) {
+    try {
+      const c = ensure();
+      const o = c.createOscillator();
+      const g = c.createGain();
+      o.type = type; o.frequency.value = freq;
+      g.gain.setValueAtTime(0, c.currentTime);
+      g.gain.linearRampToValueAtTime(vol, c.currentTime + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + ms/1000);
+      o.connect(g).connect(c.destination);
+      o.start();
+      o.stop(c.currentTime + ms/1000 + 0.05);
+    } catch (e) {}
+  }
+  // エラー用ビープ（低音→さらに低音）
+  function errorBeep() {
+    beep(300, 140, 'square', 0.28);
+    setTimeout(() => beep(220, 200, 'square', 0.28), 120);
+  }
+  // 警告用（不足など1トーン）
+  function warnBeep() { beep(700, 180, 'sawtooth', 0.22); }
+
+  // 初回のユーザー操作で解禁
+  document.addEventListener('pointerdown', unlockOnce, { once: true, capture: true });
+  document.addEventListener('touchstart', unlockOnce, { once: true, capture: true });
+
+  return { errorBeep, warnBeep, unlockOnce };
+})();
 
   // tap/クリックを確実に拾う
   function bindTap(el, handler) {
@@ -175,7 +215,12 @@
   }
 
   // ========= 演算ロジック =========
-  function alertError(msg){ try { alert(msg); } catch(e){} vibrate(240); }
+function alertError(msg){
+  try { alert(msg); } catch(e) {}
+  // iPhoneは vibrate 非対応（無視される）。Android等では振動。
+  if (navigator.vibrate) { navigator.vibrate(240); }
+  AudioMgr.errorBeep();
+}
 
   function buildCutsForCalc(tolerance){
     const cuts=[];
