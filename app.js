@@ -7,6 +7,67 @@
 
   // ====== プリセット保存（localStorage） ======
   const PRESET_KEY = slot => `obikyo_preset_v1_${slot}`;
+// === 既存の PRESET_KEY, savePreset, loadPreset の下あたりに追記 ===
+
+// 全プリセットをまとめて取得
+function dumpAllPresets() {
+  const slots = [1,2,3,4];
+  const data = {};
+  for (const s of slots) {
+    const raw = localStorage.getItem(PRESET_KEY(s));
+    if (raw) data[s] = JSON.parse(raw);
+  }
+  return { version: 1, exportedAt: new Date().toISOString(), data };
+}
+
+// JSONを全プリセットへ一括反映（上書き）
+function loadAllPresets(obj) {
+  if (!obj || !obj.data) throw new Error('不正なファイルです');
+  const slots = Object.keys(obj.data);
+  for (const s of slots) {
+    localStorage.setItem(PRESET_KEY(s), JSON.stringify(obj.data[s]));
+  }
+}
+
+// ダウンロードヘルパ
+function downloadText(filename, text) {
+  const blob = new Blob([text], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  a.remove(); URL.revokeObjectURL(url);
+}
+
+// クリック配線
+function wireExportImportButtons() {
+  const btnExport = document.getElementById('btnExport');
+  const btnImport = document.getElementById('btnImport');
+  const inputFile = document.getElementById('importFile');
+
+  btnExport.addEventListener('click', () => {
+    const payload = dumpAllPresets();
+    downloadText('obikyo-presets.json', JSON.stringify(payload, null, 2));
+  });
+
+  btnImport.addEventListener('click', () => inputFile.click());
+
+  inputFile.addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const obj = JSON.parse(text);
+      loadAllPresets(obj);
+      alert('インポート完了：カスタム1〜4に読み込みました。');
+    } catch (err) {
+      console.error(err);
+      alert('インポートに失敗しました。ファイルを確認してください。');
+    } finally {
+      inputFile.value = '';
+    }
+  });
+}
 
   function getUIState() {
     const cuts = [];
@@ -319,6 +380,14 @@
     // 初期：空行は作らない（必要なら追加）
     for (let i = 0; i < 3; i++) addCutInput();
   }
+function wire() {
+  // ...既存のイベント配線...
+  $$('.btn-preset').forEach(bindLongPressPreset);
+  for (let i = 0; i < 3; i++) addCutInput();
+
+  // 追加：外部保存/読込
+  wireExportImportButtons();
+}
 
   document.addEventListener('DOMContentLoaded', wire);
 })();
