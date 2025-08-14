@@ -37,43 +37,51 @@
     return { errorBeep, warnBeep, unlockOnce };
   })();
 
-  // ========= 誤タップ対策：スクロール監視 & 安全タップ =========
-  let __lastScrollAt = 0;
-  const markScrolled = () => { __lastScrollAt = Date.now(); };
+// スクロール中/直後のタップ無効 + 指移動しきい値 + クリックはフォールバックで許可
+function bindTap(el, handler) {
+  if (!el) return;
+  const THRESH = 10;     // 指の移動が10px超→タップ扱いしない
+  const COOLDOWN = 200;  // スクロール直後200msはタップ無効
+  const DUP_MS = 350;    // 重複抑止の猶予
 
-  // スクロール中/直後のタップ無効 + 指移動しきい値 + ゴーストクリック抑止
-  function bindTap(el, handler) {
-    if (!el) return;
-    const THRESH = 10;   // 指の移動が10px超→タップ扱いしない
-    const COOLDOWN = 200; // スクロール直後200msはタップ無効
+  let startX=0, startY=0, moved=false;
+  let lastHandledAt = 0;
 
-    let startX=0, startY=0, moved=false;
+  el.addEventListener('touchstart', (e) => {
+    const t = e.touches[0];
+    startX = t.clientX; startY = t.clientY; moved = false;
+  }, { passive:true });
 
-    el.addEventListener('touchstart', (e) => {
-      const t = e.touches[0];
-      startX = t.clientX; startY = t.clientY; moved = false;
-    }, { passive:true });
+  el.addEventListener('touchmove', (e) => {
+    const t = e.touches[0];
+    if (Math.hypot(t.clientX - startX, t.clientY - startY) > THRESH) moved = true;
+  }, { passive:true });
 
-    el.addEventListener('touchmove', (e) => {
-      const t = e.touches[0];
-      if (Math.hypot(t.clientX - startX, t.clientY - startY) > THRESH) moved = true;
-    }, { passive:true });
+  el.addEventListener('touchend', (e) => {
+    if (moved) return;
+    if (Date.now() - __lastScrollAt < COOLDOWN) return;
+    e.preventDefault();              // ゴーストクリック軽減（※ click は殺さない）
+    lastHandledAt = Date.now();
+    handler(e);
+  }, { passive:false });
 
-    el.addEventListener('touchend', (e) => {
-      if (moved) return;
-      if (Date.now() - __lastScrollAt < COOLDOWN) return;
-      e.preventDefault(); // ゴーストクリック抑止
-      handler(e);
-    }, { passive:false });
+  el.addEventListener('pointerup', (e) => {
+    if (Date.now() - __lastScrollAt < COOLDOWN) return;
+    lastHandledAt = Date.now();
+    handler(e);
+  });
 
-    el.addEventListener('pointerup', (e) => {
-      if (Date.now() - __lastScrollAt < COOLDOWN) return;
-      handler(e);
-    });
-
-    // ネイティブclickはキャンセル（重複防止）
-    el.addEventListener('click', (e) => e.preventDefault(), true);
-  }
+  // ★ ここが重要：click はフォールバックとして許可。
+  // ただし直前に touch/pointer を処理済みなら重複扱いで無視。
+  el.addEventListener('click', (e) => {
+    if (Date.now() - lastHandledAt < DUP_MS) {
+      e.preventDefault(); // 直前処理と重複ならキャンセル
+      return;
+    }
+    // 直前処理が無い＝PWAで click しか来ていないケース → 正常に発火させる
+    handler(e);
+  }, true);
+}
 
   // ========= 準最適モード（隠し）フラグ =========
   let semiMode = false; // true: 準最適ON（背景を薄紫に）
