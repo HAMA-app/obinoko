@@ -1,484 +1,535 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <!-- iPhone入力時の拡大防止 -->
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>帯鋸演算</title>
-  <!-- PWA meta -->
-  <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#2563eb">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="帯鋸演算">
-  <link rel="apple-touch-icon" href="icon-180.png">
+(() => {
+  // ========= 共通ヘルパ =========
+  const r1 = v => Math.round(v * 10) / 10;
+  const $  = sel => document.querySelector(sel);
+  const $$ = sel => [...document.querySelectorAll(sel)];
+  const vibrate = ms => { if (navigator.vibrate) navigator.vibrate(ms); };
 
-  <style>
-    /* ===== ダークUI & レイアウト ===== */
-    :root{
-      --bg:#111; --bg2:#0c0c0c; --panel:#181818; --panel2:#1f1f1f;
-      --text:#fafafa; --muted:#c7c7c7; --border:#2b2b2b;
-      --brand:#2f6dff; --brand2:#2455cc; --danger:#ff6b6b;
-      --input-w:8ch;           /* 00000.0 が入る幅 */
-      --radius:12px;
-      --input-bg:#2a2a2a;      /* 入力の明るめグレー */
-      --input-bg-focus:#343434;/* フォーカス時 */
-      --y:#ffd54f;             /* 出力の黄色（機械設定・個数） */
+  // ========= iOS対応：ビープ音（初回タップで解禁） =========
+  const AudioMgr = (() => {
+    let ctx, unlocked = false;
+    function ensure() {
+      if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+      return ctx;
     }
-    html,body{background:linear-gradient(180deg,var(--bg),var(--bg2) 60%); color:var(--text);}
-    body{
-      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans JP",sans-serif;
-      padding:16px; max-width:900px; margin:auto; -webkit-tap-highlight-color:transparent;
-      -webkit-text-size-adjust:100%;
+    function unlockOnce() {
+      if (unlocked) return;
+      try { ensure().resume(); unlocked = true; } catch (e) {}
     }
-
-    h1{margin:0 0 12px; font-size:20px; line-height:1.25; font-weight:700;}
-    h1::after{ content:" （長さ単位：mm）"; font-weight:400; font-size:0.9em; color:var(--muted); }
-
-    /* 1段目の基本入力：2カラム自動（狭ければ1列へ） */
-    .row{
-      display:grid;
-      grid-template-columns: repeat(2, minmax(220px, 1fr));
-      gap:12px 16px;
-      align-items:end;
-      margin-bottom:10px;
+    function beep(freq=880, ms=180, type='sine', vol=0.22) {
+      try {
+        const c = ensure();
+        const o = c.createOscillator();
+        const g = c.createGain();
+        o.type = type; o.frequency.value = freq;
+        g.gain.setValueAtTime(0, c.currentTime);
+        g.gain.linearRampToValueAtTime(vol, c.currentTime + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + ms/1000);
+        o.connect(g).connect(c.destination);
+        o.start();
+        o.stop(c.currentTime + ms/1000 + 0.05);
+      } catch (e) {}
     }
-    @media (max-width:540px){ .row{ grid-template-columns: 1fr; } }
+    function errorBeep(){ beep(300,140,'square',0.28); setTimeout(()=>beep(220,200,'square',0.28),120); }
+    function warnBeep(){  beep(700,180,'sawtooth',0.22); }
+    document.addEventListener('pointerdown', unlockOnce, { once:true, capture:true });
+    document.addEventListener('touchstart',  unlockOnce, { once:true, capture:true });
+    return { errorBeep, warnBeep, unlockOnce };
+  })();
 
-    /* ラベルは タイトル行 / 入力行 の縦積み */
-    label{
-      color:var(--muted);
-      font-size:15px;
-      display:grid;
-      grid-template-rows:auto auto;
-      gap:6px;
+  // ========= 誤タップ対策：スクロール監視 & 安全タップ =========
+  let __lastScrollAt = 0;
+  const markScrolled = () => { __lastScrollAt = Date.now(); };
+
+  // スクロール中/直後のタップ無効 + 指移動しきい値 + ゴーストクリック抑止
+  function bindTap(el, handler) {
+    if (!el) return;
+    const THRESH = 10;   // 指の移動が10px超→タップ扱いしない
+    const COOLDOWN = 200; // スクロール直後200msはタップ無効
+
+    let startX=0, startY=0, moved=false;
+
+    el.addEventListener('touchstart', (e) => {
+      const t = e.touches[0];
+      startX = t.clientX; startY = t.clientY; moved = false;
+    }, { passive:true });
+
+    el.addEventListener('touchmove', (e) => {
+      const t = e.touches[0];
+      if (Math.hypot(t.clientX - startX, t.clientY - startY) > THRESH) moved = true;
+    }, { passive:true });
+
+    el.addEventListener('touchend', (e) => {
+      if (moved) return;
+      if (Date.now() - __lastScrollAt < COOLDOWN) return;
+      e.preventDefault(); // ゴーストクリック抑止
+      handler(e);
+    }, { passive:false });
+
+    el.addEventListener('pointerup', (e) => {
+      if (Date.now() - __lastScrollAt < COOLDOWN) return;
+      handler(e);
+    });
+
+    // ネイティブclickはキャンセル（重複防止）
+    el.addEventListener('click', (e) => e.preventDefault(), true);
+  }
+
+  // ========= 準最適モード（隠し）フラグ =========
+  let semiMode = false; // true: 準最適ON（背景を薄紫に）
+  const MAGIC = 77777.7;
+  function setSemiMode(on){
+    semiMode = !!on;
+    document.body.classList.toggle('semi-mode', semiMode);
+  }
+
+  // ========= プリセット保存（localStorage） =========
+  const PRESET_KEY = slot => `obikyo_preset_v1_${slot}`;
+
+  function getUIState() {
+    const cuts = [];
+    const lengths = $$('#cutInputs .length');
+    const qtys = $$('#cutInputs .qty');
+    for (let i = 0; i < lengths.length; i++) {
+      const L = Number(lengths[i].value);
+      const Q = Number(qtys[i].value);
+      if (!L || !Q) continue;
+      cuts.push({ length: r1(L), qty: Math.trunc(Q) });
     }
+    return {
+      stockLength: r1(Number($('#stockLength').value || 0)),
+      stockCount: Math.trunc(Number($('#stockCount').value || 0)),
+      grip: r1(Number($('#grip').value || 0)),
+      tolerance: r1(Number($('#tolerance').value || 0)),
+      kerf: r1(Number($('#kerf').value || 0)),
+      spareTarget: $('#spareTarget').value === '' ? null : r1(Number($('#spareTarget').value)),
+      cuts
+    };
+  }
 
-    /* 入力枠は幅8chでコンパクト、明るいグレー */
-    input{
-      width:var(--input-w);
-      max-width:calc(100% - 4px);
-      padding:10px 12px;
-      font-size:16px; /* iPhone拡大防止 */
-      border:1px solid var(--border);
-      border-radius:var(--radius);
-      background:var(--input-bg);
-      color:var(--text);
-      box-shadow:0 1px 0 rgba(255,255,255,.03) inset, 0 1px 8px rgba(0,0,0,.25);
+  function setUIState(s) {
+    if (!s) return;
+    $('#stockLength').value = s.stockLength ?? 0;
+    $('#stockCount').value  = s.stockCount  ?? 0;
+    $('#grip').value        = s.grip        ?? 0;
+    $('#tolerance').value   = s.tolerance   ?? 0;
+    $('#kerf').value        = s.kerf        ?? 0;
+    $('#spareTarget').value = s.spareTarget ?? '';
+    resetCuts();
+    (s.cuts || []).forEach(c => addCutInput(c.length, c.qty));
+  }
+
+  function savePreset(slot) {
+    const state = getUIState();
+    const payload = { meta: { savedAt: new Date().toISOString() }, state };
+    localStorage.setItem(PRESET_KEY(slot), JSON.stringify(payload));
+    vibrate(80);
+    alert(`カスタム${slot}に保存しました。`);
+  }
+
+  function loadPreset(slot) {
+    const raw = localStorage.getItem(PRESET_KEY(slot));
+    if (!raw) { alert(`カスタム${slot}は未保存です。長押しで保存できます。`); return; }
+    const data = JSON.parse(raw);
+    setUIState(data.state);
+    vibrate(30);
+  }
+
+  // 長押し/短押し（タップ=呼出、長押し=保存）誤タップ耐性付き
+  function bindLongPressPreset(btn) {
+    let timer = null, pressed = false, moved = false;
+    const slot = btn.dataset.slot;
+    const THRESH = 10;
+
+    const onStart = (x, y) => {
+      pressed = true; moved = false;
+      const sx = x, sy = y;
+      timer = setTimeout(() => { if (!moved) { pressed = false; savePreset(slot); } }, 650);
+
+      const move = (e) => {
+        const t = e.touches ? e.touches[0] : e;
+        if (Math.hypot(t.clientX - sx, t.clientY - sy) > THRESH) moved = true;
+      };
+      const end = () => {
+        if (timer) clearTimeout(timer);
+        if (pressed && !moved) loadPreset(slot);  // 短押し（呼出）
+        pressed = false;
+        btn.removeEventListener('touchmove', move);
+        btn.removeEventListener('touchend', end);
+        btn.removeEventListener('mouseup', end);
+        btn.removeEventListener('mouseleave', end);
+      };
+
+      btn.addEventListener('touchmove', move, { passive:true });
+      btn.addEventListener('touchend', end);
+      btn.addEventListener('mouseup', end);
+      btn.addEventListener('mouseleave', end);
+    };
+
+    btn.addEventListener('touchstart', e => {
+      const t = e.touches[0]; onStart(t.clientX, t.clientY);
+    }, { passive:true });
+    btn.addEventListener('mousedown', e => { onStart(e.clientX, e.clientY); });
+    btn.addEventListener('click', e => e.preventDefault(), true);
+  }
+
+  // === すべてのプリセットをまとめてエクスポート/インポート ===
+  function dumpAllPresets() {
+    const slots = [1,2,3,4];
+    const data = {};
+    for (const s of slots) {
+      const raw = localStorage.getItem(PRESET_KEY(s));
+      if (raw) data[s] = JSON.parse(raw);
     }
-    input:focus{
-      outline:none;
-      background:var(--input-bg-focus);
-      border-color:#3e3e3e;
+    return { version: 1, exportedAt: new Date().toISOString(), data };
+  }
+  function loadAllPresets(obj) {
+    if (!obj || !obj.data) throw new Error('不正なファイルです');
+    for (const s of Object.keys(obj.data)) {
+      localStorage.setItem(PRESET_KEY(s), JSON.stringify(obj.data[s]));
     }
+  }
+  function downloadText(filename, text) {
+    const blob = new Blob([text], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
+    a.remove(); URL.revokeObjectURL(url);
+  }
+  function wireExportImportButtons() {
+    const btnExport = $('#btnExport');
+    const btnImport = $('#btnImport');
+    const inputFile = $('#importFile');
 
-    /* ===== 切断入力エリアを表計算風に整列 ===== */
-    .input-sheet{
-      margin-top:6px;
-      background:var(--panel2);
-      border:1px solid var(--border);
-      border-radius:12px;
-      padding:10px;
-    }
-    .sheet-head{
-      display:grid;
-      grid-template-columns: 1fr 1fr;
-      gap:8px 16px;
-      padding:4px 2px 8px;
-      color:var(--muted);
-      font-size:13px;
-    }
-    /* 2列グリッドにして、行ごとに [長さ][本数] が揃う */
-    #cutInputs{
-      display:grid;
-      grid-template-columns: 1fr 1fr;
-      gap:10px 16px;
-    }
-    /* .cut-input 自体は消して中身だけをグリッドに流す */
-    .cut-input{
-      display:contents;
-      font-size:0; /* 中の「長さ:」「×」「本」の文字を消す（入力は後でsize復元） */
-    }
-    .cut-input .length,
-    .cut-input .qty{
-      width:100%;
-      font-size:16px;
-    }
-
-    /* 追加/演算ボタン */
-    .btn{
-      background:var(--brand); color:#fff; border:none; border-radius:var(--radius);
-      cursor:pointer; padding:12px 16px; font-size:16px; min-height:44px; line-height:1.2;
-      box-shadow:0 2px 10px rgba(0,0,0,.35);
-    }
-    .btn:hover{background:var(--brand2);}
-    .tests{margin-top:12px; display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:10px; align-items:stretch;}
-    .tests > span{grid-column:1 / -1; color:var(--muted); margin:0 0 -2px;}
-
-    /* ===== 出力（部材ごとカード or 表計算テーブル、どちらでも見やすく） ===== */
-    .result{
-      margin-top:14px; padding:16px; background:var(--panel2); border:1px solid var(--border); border-radius:14px;
-      font-size:15px; line-height:1.65; letter-spacing:.2px;
-      white-space:normal;
-    }
-    .y{ color:var(--y); font-weight:600; } /* 機械設定・個数を黄色で強調 */
-
-    /* 表計算テーブル用（renderOutputで使用） */
-    .table-wrap{ margin-top:12px; background:var(--panel2); border:1px solid var(--border); border-radius:12px; overflow:auto; }
-    .table{ width:100%; min-width:760px; border-collapse:separate; border-spacing:0; font-size:15px; line-height:1.5; }
-    .table th, .table td{ padding:10px 12px; border-bottom:1px solid var(--border); white-space:nowrap; }
-    .table thead th{ position:sticky; top:0; background:var(--panel2); z-index:1; text-align:left; color:var(--muted); font-weight:600; backdrop-filter:blur(4px); }
-    .num{ text-align:right; font-variant-numeric:tabular-nums; }
-    .group-head{ font-weight:600; }
-    .table tr:last-child td{ border-bottom:none; }
-    .subtle{ color:var(--muted); }
-  </style>
-</head>
-<body>
-  <h1>帯鋸演算（HTML版・長尺優先+ギャップ埋め+監査）</h1>
-
-  <div class="row">
-    <label><span>部材長さ:</span><input type="number" id="stockLength" value="1000"> <span class="unit">mm</span></label>
-    <label><span>本数:</span><input type="number" id="stockCount" value="10"> <span class="unit">本</span></label>
-  </div>
-  <div class="row">
-    <label><span>掴みしろ:</span><input type="number" id="grip" value="129"> <span class="unit">mm</span></label>
-    <label><span>切断誤差 (+mm):</span><input type="number" id="tolerance" value="1"></label>
-  </div>
-  <div class="row">
-    <label><span>1カットごとの削れ:</span><input type="number" id="kerf" value="2.5"> <span class="unit">mm</span></label>
-  </div>
-
-  <h3>切断長さと本数（最大30種類）</h3>
-
-  <!-- 入力表（ヘッダー＋2列グリッド） -->
-  <div class="input-sheet">
-    <div class="sheet-head">
-      <div>長さ (mm)</div>
-      <div>本数 (本)</div>
-    </div>
-    <div id="cutInputs"></div>
-  </div>
-
-  <div class="row" style="grid-template-columns:repeat(2,minmax(160px,1fr));margin-top:10px">
-    <button class="btn" onclick="addCutInput()">切断パターン追加</button>
-    <button class="btn" onclick="calculate()">演算</button>
-  </div>
-
-  <div class="tests">
-    <span>■ テストケース：</span>
-    <button class="btn" onclick="loadTest(1)">T1: 400×2, 100×4 / 1000×3</button>
-    <button class="btn" onclick="loadTest(2)">T2: 200×5（+1誤差）/ 1000×1</button>
-    <button class="btn" onclick="loadTest(3)">T3: 600×1, 300×2 / 1000×2</button>
-    <button class="btn" onclick="loadTest(4)">T4: 400×10, 100×30, 60×40 / 1000×10</button>
-  </div>
-
-  <div class="result" id="result"></div>
-
-  <audio id="beep" src="beep.mp3"></audio>
-
-  <script>
-    // --- ガード: 重複定義の回避（ホットリロード等対策） ---
-    if (!window.__OBIKYO__) window.__OBIKYO__ = {};
-
-    if (!window.__OBIKYO__.initialized) {
-      window.__OBIKYO__.initialized = true;
-      window.__OBIKYO__.cutRowCount = 0;
-
-      // 入力行追加（最大30）
-      window.addCutInput = function addCutInput(length = "", qty = "") {
-        const maxRows = 30;
-        if (window.__OBIKYO__.cutRowCount >= maxRows) return;
-        const div = document.createElement('div');
-        div.className = 'cut-input';
-        // 既存の文言は残しつつ、CSSで文字を消して2セルに並べる
-        div.innerHTML = `長さ: <input type="number" class="length" value="${length}"> × <input type="number" class="qty" value="${qty}"> 本`;
-        document.getElementById('cutInputs').appendChild(div);
-        window.__OBIKYO__.cutRowCount++;
+    bindTap(btnExport, () => {
+      const payload = dumpAllPresets();
+      downloadText('obikyo-presets.json', JSON.stringify(payload, null, 2));
+    });
+    bindTap(btnImport, () => inputFile && inputFile.click());
+    inputFile?.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const obj = JSON.parse(text);
+        loadAllPresets(obj);
+        alert('インポート完了：カスタム1〜4に読み込みました。');
+      } catch (err) {
+        console.error(err);
+        alert('インポートに失敗しました。ファイルを確認してください。');
+      } finally {
+        inputFile.value = '';
       }
+    });
+  }
 
-      function beep() {
-        const a = document.getElementById('beep');
-        if (a) { a.currentTime = 0; a.play().catch(()=>{}); }
-      }
+  // ========= 入力行 =========
+  let cutRowCount = 0;
+  function addCutInput(length = "", qty = "") {
+    if (cutRowCount >= 30) return;
+    const row = document.createElement('div');
+    row.className = 'cut-input';
+    row.innerHTML = `
+      <input type="number" class="length" placeholder="長さ" aria-label="長さ(mm)" value="${length}">
+      <input type="number" class="qty" placeholder="個数" aria-label="個数(本)" value="${qty}">
+    `;
+    $('#cutInputs').appendChild(row);
+    cutRowCount++;
+  }
+  function resetCuts() {
+    $('#cutInputs').innerHTML = '';
+    cutRowCount = 0;
+    $('#result').textContent = '';
+  }
 
-      function buildCuts(tolerance) {
-        const lengths = [...document.querySelectorAll('.length')];
-        const qtys = [...document.querySelectorAll('.qty')];
-        const cuts = [];
-        for (let i = 0; i < lengths.length; i++) {
-          const target = Number(lengths[i].value);
-          const qty = Number(qtys[i].value);
-          if (!target || !qty) continue;
-          const input = target - Number(tolerance); // 誤差+1 → 設定を1短く
-          for (let j = 0; j < qty; j++) cuts.push({ target, input });
-        }
-        return cuts;
-      }
+  // ========= エラーアラート =========
+  function alertError(msg){
+    try { alert(msg); } catch(e) {}
+    if (navigator.vibrate) { navigator.vibrate(240); } // iOSは無視される
+    AudioMgr.errorBeep();
+  }
 
-      function statsFromCuts(cuts, kerf) {
-        const map = new Map();
-        let totalCuts = 0, totalUsage = 0;
-        for (const c of cuts) {
-          map.set(c.target, (map.get(c.target) || 0) + 1);
-          totalCuts += 1;
-          totalUsage += (c.target + kerf);
-        }
-        return { countByTarget: map, totalCuts, totalUsage };
-      }
-
-      // 第1パス：長い順で初期割当（制約付きDFS）
-      function assignBoardsDescending(cuts, stockLength, stockCount, grip, kerf) {
-        const boards = Array.from({length: stockCount}, (_, i) => ({ id: i+1, cuts: [], used: 0 }));
-        let remaining = cuts.slice().sort((a, b) => b.target - a.target);
-
-        const CANDIDATE_LIMIT = 60;
-        const NODE_LIMIT = 20000;
-
-        for (const board of boards) {
-          if (remaining.length === 0) break;
-          const capacity = stockLength - grip;
-          const pool = remaining.slice(0, Math.min(CANDIDATE_LIMIT, remaining.length));
-
-          let bestPlan = [];
-          let bestUsed = 0;
-          let nodes = 0;
-
-          function dfs(idx, used, chosen) {
-            if (++nodes > NODE_LIMIT) return;
-            if (used > bestUsed) { bestUsed = used; bestPlan = chosen.slice(); }
-            for (let i = idx; i < pool.length; i++) {
-              const c = pool[i];
-              const need = c.target + kerf;
-              if (used + need > capacity) continue;
-              chosen.push(c);
-              dfs(i + 1, used + need, chosen);
-              chosen.pop();
-            }
-          }
-          dfs(0, 0, []);
-
-          board.cuts = bestPlan;
-          board.used = bestPlan.reduce((s, c) => s + c.target + kerf, 0);
-          const set = new Set(bestPlan);
-          remaining = remaining.filter(x => !set.has(x));
-        }
-        return { boards, remaining };
-      }
-
-      // 第2パス：短い順でギャップ埋め
-      function gapFill(boards, remaining, stockLength, grip, kerf) {
-        remaining.sort((a, b) => a.target - b.target);
-        for (const board of boards) {
-          let cap = (stockLength - grip) - board.used;
-          if (cap <= 0) continue;
-          for (let i = 0; i < remaining.length && cap > 0; ) {
-            const c = remaining[i];
-            const need = c.target + kerf;
-            if (need <= cap + 1e-9) {
-              board.cuts.push(c);
-              board.used += need;
-              cap -= need;
-              remaining.splice(i, 1);
-            } else {
-              break; // 最短が入らないなら以降も入らない
-            }
-          }
-          const capMax = stockLength - grip;
-          if (board.used > capMax) board.used = capMax;
-        }
-        return remaining;
-      }
-
-      function tallyCuts(cuts) {
-        const map = new Map();
-        for (const c of cuts) {
-          const key = `${c.input}->${c.target}`;
-          if (!map.has(key)) map.set(key, { input: c.input, target: c.target, count: 0 });
-          map.get(key).count++;
-        }
-        return Array.from(map.values()).sort((a,b)=> a.target - b.target || a.input - b.input);
-      }
-
-      function compressIds(ids) {
-        ids.sort((a,b)=>a-b);
-        const ranges = [];
-        let start = ids[0], prev = ids[0];
-        for (let i = 1; i < ids.length; i++) {
-          const cur = ids[i];
-          if (cur === prev + 1) { prev = cur; continue; }
-          ranges.push(start === prev ? `${start}` : `${start}〜${prev}`);
-          start = prev = cur;
-        }
-        ranges.push(start === prev ? `${start}` : `${start}〜${prev}`);
-        return ranges.join(',');
-      }
-
-      // ===== 出力：表計算テーブル（数値は小数1桁固定） =====
-      function renderOutput(boards, shortageMap, stockLength, grip, audit) {
-        const SL = Number(stockLength), GR = Number(grip);
-
-        // 1) 集計：同一構成をグルーピング
-        const sigMap = new Map();
-        for (const board of boards) {
-          if (!board?.cuts?.length) continue;
-          const tally = tallyCuts(board.cuts); // [{input,target,count},...]
-          const rEx = Math.max(0, (SL - GR) - board.used);
-          const rIn = Math.max(0, SL - board.used); // 掴みしろ含む
-          const sig = JSON.stringify({ tally, rEx:+rEx.toFixed(3), rIn:+rIn.toFixed(3) });
-          if (!sigMap.has(sig)) sigMap.set(sig, { ids:[], tally, rEx, rIn });
-          sigMap.get(sig).ids.push(board.id);
-        }
-
-        // 2) テーブル構築
-        let totalRemainInclGrip = 0;
-        let rowsHtml = '';
-        for (const { ids, tally, rEx, rIn } of Array.from(sigMap.values()).sort((a,b)=>a.ids[0]-b.ids[0])) {
-          totalRemainInclGrip += rIn * ids.length;
-
-          const groupLabel = `部材${compressIds(ids)}`;
-          const remainCell =
-            `<td class="num" rowspan="${tally.length}">${Number(rIn).toFixed(1)}</td>` +
-            `<td class="num" rowspan="${tally.length}">${Number(rEx).toFixed(1)}</td>`;
-
-          tally.forEach((row, idx) => {
-            const inp = Number(row.input).toFixed(1);
-            const tgt = Number(row.target).toFixed(1);
-            const qty = row.count;
-            const usedLen = (Number(row.target) * qty).toFixed(1);
-            const kerfSum = (qty * Number(document.getElementById('kerf').value)).toFixed(1);
-
-            rowsHtml += `<tr>
-              ${idx===0 ? `<td class="group-head" rowspan="${tally.length}">${groupLabel}</td>` : ``}
-              <td class="num">${tgt}</td>
-              <td class="num y">${inp}</td>
-              <td class="num y">${qty}</td>
-              <td class="num">${usedLen}</td>
-              <td class="num subtle">${kerfSum}</td>
-              ${idx===0 ? remainCell : ``}
-            </tr>`;
-          });
-        }
-
-        // 3) テーブル本体HTML
-        const tableHtml = `
-        <div class="table-wrap">
-          <table class="table">
-            <thead>
-              <tr>
-                <th>部材</th>
-                <th class="num">実長<br><span class="subtle">(mm)</span></th>
-                <th class="num">機械設定<br><span class="subtle">(mm)</span></th>
-                <th class="num">本数</th>
-                <th class="num">実使用長<br><span class="subtle">(mm)</span></th>
-                <th class="num">削れ合計<br><span class="subtle">(mm)</span></th>
-                <th class="num">余り(含む)<br><span class="subtle">(mm)</span></th>
-                <th class="num">有効残長<br><span class="subtle">(mm)</span></th>
-              </tr>
-            </thead>
-            <tbody>${rowsHtml || `<tr><td colspan="8" class="subtle">切断結果がありません</td></tr>`}</tbody>
-          </table>
-        </div>`;
-
-        // 4) 不足・監査
-        const keys = Array.from(shortageMap.keys()).sort((a,b)=>a-b);
-        let below = `<div style="margin-top:8px">合計余り（掴みしろ含む・全材）：<b>${totalRemainInclGrip.toFixed(1)} mm</b></div>`;
-        if (keys.length > 0) {
-          below += `<div style="margin-top:6px"><b>切断不足：</b>` +
-                  keys.map(k => ` ${Number(k).toFixed(1)}mm × ${shortageMap.get(k)}本`).join(' / ') +
-                  `</div>`;
-          beep();
-        } else {
-          below += `<div style="margin-top:6px"><b>切断不足：</b>なし</div>`;
-        }
-        below += `<div style="margin-top:8px" class="subtle">
-          --- 監査 ---　要求 ${audit.demandUsage.toFixed(1)}mm ／ 容量 ${audit.totalCapacity.toFixed(1)}mm ／ 実割当 ${audit.assignedUsage.toFixed(1)}mm ／ 不足発生? ${audit.demandUsage > audit.totalCapacity ? 'はい' : 'いいえ'}
-        </div>`;
-
-        document.getElementById('result').innerHTML = tableHtml + below;
-      }
-
-      // ===== メイン処理（ロジックは従来どおり） =====
-      window.calculate = function calculate() {
-        const stockLength = Number(document.getElementById('stockLength').value);
-        const stockCount = Number(document.getElementById('stockCount').value);
-        const grip = Number(document.getElementById('grip').value);
-        const kerf = Number(document.getElementById('kerf').value);
-        const tolerance = Number(document.getElementById('tolerance').value);
-        document.getElementById('result').textContent = '';
-
-        const cuts = buildCuts(tolerance);
-        if (cuts.length === 0 || stockCount <= 0 || stockLength <= 0) {
-          document.getElementById('result').textContent = '入力が不足しています。';
-          return;
-        }
-        const demand = statsFromCuts(cuts, kerf);
-        const totalCapacity = (stockLength - grip) * stockCount;
-
-        const { boards, remaining } = assignBoardsDescending(cuts, stockLength, stockCount, grip, kerf);
-        const afterGap = gapFill(boards, remaining, stockLength, grip, kerf);
-
-        const assignedCutsArray = boards.flatMap(b => b.cuts);
-        const assigned = statsFromCuts(assignedCutsArray, kerf);
-
-        const shortageMap = new Map();
-        for (const c of afterGap) shortageMap.set(c.target, (shortageMap.get(c.target) || 0) + 1);
-        if (shortageMap.size === 0) {
-          for (const [t, need] of demand.countByTarget.entries()) {
-            const done = assigned.countByTarget.get(t) || 0;
-            if (done < need) shortageMap.set(t, need - done);
-          }
-        }
-
-        const audit = {
-          demandUsage: demand.totalUsage,
-          totalCapacity: totalCapacity,
-          assignedUsage: assigned.totalUsage
-        };
-
-        renderOutput(boards, shortageMap, stockLength, grip, audit);
-      }
-
-      window.resetCuts = function resetCuts() {
-        document.getElementById('cutInputs').innerHTML = '';
-        window.__OBIKYO__.cutRowCount = 0;
-      }
-
-      window.loadTest = function loadTest(id) {
-        resetCuts();
-        const L = (v) => document.getElementById(v);
-        if (id === 1) {
-          L('stockLength').value = 1000; L('stockCount').value = 3; L('grip').value = 129;
-          L('kerf').value = 2.5; L('tolerance').value = 1;
-          addCutInput(400,2); addCutInput(100,4);
-        } else if (id === 2) {
-          L('stockLength').value = 1000; L('stockCount').value = 1; L('grip').value = 100;
-          L('kerf').value = 2.5; L('tolerance').value = 1;
-          addCutInput(200,5);
-        } else if (id === 3) {
-          L('stockLength').value = 1000; L('stockCount').value = 2; L('grip').value = 120;
-          L('kerf').value = 3; L('tolerance').value = 0;
-          addCutInput(600,1); addCutInput(300,2);
-        } else if (id === 4) {
-          L('stockLength').value = 1000; L('stockCount').value = 10; L('grip').value = 129;
-          L('kerf').value = 2.5; L('tolerance').value = 1;
-          addCutInput(400,10); addCutInput(100,30); addCutInput(60,40);
-        }
-        calculate();
-      }
-
-      // 初期：入力行3つ
-      for (let i = 0; i < 3; i++) addCutInput();
+  // ========= 演算ロジック =========
+  function buildCutsForCalc(tolerance){
+    const cuts=[];
+    const lengths=$$('#cutInputs .length');
+    const qtys=$$('#cutInputs .qty');
+    for(let i=0;i<lengths.length;i++){
+      const target=Number(lengths[i].value);
+      const qty=Number(qtys[i].value);
+      if(!target||!qty) continue;
+      const input=r1(target-Number(tolerance)); // 機械設定
+      for(let j=0;j<qty;j++) cuts.push({target:r1(target), input});
     }
-  </script>
+    return cuts;
+  }
 
-  <script>
-    // --- PWA: Service Worker 登録（対応ブラウザのみ） ---
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js').catch(console.error);
+  function statsFromCuts(cuts,kerf){
+    const map=new Map(); let totalCuts=0,totalUsage=0;
+    for(const c of cuts){ map.set(c.target,(map.get(c.target)||0)+1); totalCuts++; totalUsage+=r1(c.target+kerf); }
+    return {countByTarget:map,totalCuts,totalUsage};
+  }
+
+  function assignBoardsDescending(cuts,stockLength,stockCount,grip,kerf){
+    const boards=Array.from({length:stockCount},(_,i)=>({id:i+1,cuts:[],used:0}));
+    let remaining=cuts.slice().sort((a,b)=>b.target-a.target);
+
+    // 準最適モードでは候補/ノード上限を上げて探索を深くする
+    const CANDIDATE_LIMIT = semiMode ? 120 : 60;
+    const NODE_LIMIT      = semiMode ? 100000 : 20000;
+
+    for(const board of boards){
+      if(remaining.length===0) break;
+      const capacity=r1(stockLength-grip);
+      const pool=remaining.slice(0,Math.min(CANDIDATE_LIMIT,remaining.length));
+      let bestPlan=[],bestUsed=0,nodes=0;
+
+      (function dfs(idx,used,chosen){
+        if(++nodes>NODE_LIMIT) return;
+        if(used>bestUsed){bestUsed=used;bestPlan=chosen.slice();}
+        for(let i=idx;i<pool.length;i++){
+          const c=pool[i], need=r1(c.target+kerf);
+          if(used+need>capacity) continue;
+          chosen.push(c); dfs(i+1,r1(used+need),chosen); chosen.pop();
+        }
+      })(0,0,[]);
+      board.cuts=bestPlan;
+      board.used=bestPlan.reduce((s,c)=>r1(s+c.target+kerf),0);
+      const set=new Set(bestPlan);
+      remaining=remaining.filter(x=>!set.has(x));
+    }
+    return {boards,remaining};
+  }
+
+  function gapFill(boards,remaining,stockLength,grip,kerf){
+    remaining.sort((a,b)=>a.target-b.target);
+    for(const board of boards){
+      let cap=r1((stockLength-grip)-board.used); if(cap<=0) continue;
+      for(let i=0;i<remaining.length && cap>0;){
+        const c=remaining[i], need=r1(c.target+kerf);
+        if(need<=cap+1e-9){ board.cuts.push(c); board.used=r1(board.used+need); cap=r1(cap-need); remaining.splice(i,1); }
+        else break;
+      }
+      const capMax=r1(stockLength-grip); if(board.used>capMax) board.used=capMax;
+    }
+    return remaining;
+  }
+
+  function tallyCuts(cuts){
+    const map=new Map();
+    for(const c of cuts){
+      const key=`${c.input}->${c.target}`;
+      if(!map.has(key)) map.set(key,{input:c.input,target:c.target,count:0,meta:c.meta||''});
+      map.get(key).count++;
+    }
+    return Array.from(map.values()).sort((a,b)=>a.target-b.target||a.input-b.input);
+  }
+
+  function compressIds(ids){
+    ids.sort((a,b)=>a-b); const ranges=[]; let s=ids[0],p=ids[0];
+    for(let i=1;i<ids.length;i++){ const c=ids[i]; if(c===p+1){p=c;continue;} ranges.push(s===p?`${s}`:`${s}〜${p}`); s=p=c; }
+    ranges.push(s===p?`${s}`:`${s}〜${p}`); return ranges.join(',');
+  }
+
+  function renderOutput(boards,shortageMap,stockLength,grip,audit){
+    const SL=Number(stockLength), GR=Number(grip);
+    const sigMap=new Map();
+    for(const b of boards){
+      if(!b?.cuts?.length) continue;
+      const tally=tallyCuts(b.cuts);
+      const rEx=Math.max(0, r1((SL-GR)-b.used));
+      const rIn=Math.max(0, r1(SL-b.used));
+      const sig=JSON.stringify({tally,rEx:+rEx.toFixed(3),rIn:+rIn.toFixed(3)});
+      if(!sigMap.has(sig)) sigMap.set(sig,{ids:[],tally,rEx,rIn});
+      sigMap.get(sig).ids.push(b.id);
+    }
+
+    let totalRemain=0, rowsHtml='';
+    for(const {ids,tally,rEx,rIn} of Array.from(sigMap.values()).sort((a,b)=>a.ids[0]-b.ids[0])){
+      totalRemain += rIn * ids.length;
+      const group=`部材${compressIds(ids)}`;
+      const remainCell=`<td class="num" rowspan="${tally.length}">${rIn.toFixed(1)}</td><td class="num" rowspan="${tally.length}">${rEx.toFixed(1)}</td>`;
+      tally.forEach((row,i)=>{
+        const inp=Number(row.input).toFixed(1);
+        const tgt=Number(row.target).toFixed(1);
+        const qty=row.count;
+        const usedLen=(Number(row.target)*qty).toFixed(1);
+        const kerfSum=(qty*Number($('#kerf').value)).toFixed(1);
+        rowsHtml += `<tr>
+          ${i===0?`<td class="group-head" rowspan="${tally.length}">${group}</td>`:``}
+          <td class="num">${tgt}${row.meta==='URAMODE' ? ' <span class="subtle">(捨て切り)</span>' : ''}</td>
+          <td class="num y">${inp}</td>
+          <td class="num y">${qty}</td>
+          ${i===0?remainCell:``}
+          <td class="num">${usedLen}</td>
+          <td class="num subtle">${kerfSum}</td>
+        </tr>`;
       });
     }
-  </script>
-</body>
-</html>
+
+    const tableHtml = `
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>部材</th><th class="num">実長</th><th class="num">機械設定</th><th class="num">本数</th>
+              <th class="num">余り</th><th class="num">有効残長</th><th class="num">実使用長</th><th class="num">削れ合計</th>
+            </tr>
+          </thead>
+          <tbody>${rowsHtml || `<tr><td colspan="8" class="subtle">切断結果がありません</td></tr>`}</tbody>
+        </table>
+      </div>`;
+
+    const keys=[...shortageMap.keys()].sort((a,b)=>a-b);
+    let below = `<div style="margin-top:8px">合計余り（掴みしろ含む・全材）：<b>${totalRemain.toFixed(1)} mm</b></div>`;
+    if(keys.length>0){
+      below += `<div style="margin-top:6px"><b class="danger">切断不足：</b>` +
+               keys.map(k=>` <span class="danger">${Number(k).toFixed(1)}mm × ${shortageMap.get(k)}本</span>`).join(' / ') + `</div>`;
+      alertError('切断不足があります。入力や条件をご確認ください。');
+    }else{
+      below += `<div style="margin-top:6px"><b>切断不足：</b>なし</div>`;
+    }
+    below += `<div style="margin-top:8px" class="subtle">
+      --- 監査 ---　要求 ${audit.demandUsage.toFixed(1)}mm ／ 容量 ${audit.totalCapacity.toFixed(1)}mm ／ 実割当 ${audit.assignedUsage.toFixed(1)}mm ／ 不足発生 ${audit.demandUsage>audit.totalCapacity?'はい':'いいえ'}
+    </div>`;
+
+    $('#result').innerHTML = tableHtml + below;
+
+    // ★ スクロール中/直後タップ抑止のための監視（ここでDOMにぶら下げる）
+    $('#result').querySelectorAll('.table-wrap').forEach(el => {
+      el.addEventListener('scroll',    markScrolled, { passive:true });
+      el.addEventListener('touchmove', markScrolled, { passive:true });
+    });
+  }
+
+  // 裏モード（余り目標の捨て切り追加）
+  function applyUraMode(boards, stockLength, grip, kerf, tolerance, spareTarget){
+    if(!(spareTarget>0) || spareTarget<=grip) return;
+    const MIN_EFFECTIVE = 50;
+    for(const b of boards){
+      const rIn = r1(stockLength - b.used);
+      const rEx = r1((stockLength - grip) - b.used);
+      const diff = r1(rIn - spareTarget);
+      if(rEx >= MIN_EFFECTIVE && diff > kerf + 1e-9){
+        const dropActual = r1(diff - kerf);
+        if(dropActual>0){
+          const dropInput = r1(dropActual - tolerance);
+          b.cuts.push({target: dropActual, input: dropInput, meta:'URAMODE'});
+          b.used = r1(b.used + dropActual + kerf);
+        }
+      }
+    }
+  }
+
+  function run(secret=false){
+    try{
+      const stockLength = r1(Number($('#stockLength').value));
+      const stockCount  = Math.trunc(Number($('#stockCount').value));
+      const grip        = r1(Number($('#grip').value));
+      const kerf        = r1(Number($('#kerf').value));
+      const tolerance   = r1(Number($('#tolerance').value));
+      const spareTarget = $('#spareTarget').value===''? null : r1(Number($('#spareTarget').value));
+      $('#result').textContent='';
+
+      const cuts=buildCutsForCalc(tolerance);
+      if(cuts.length===0 || stockCount<=0 || stockLength<=0){
+        $('#result').textContent='入力が不足しています。'; AudioMgr.warnBeep(); return;
+      }
+      const demand=statsFromCuts(cuts,kerf);
+      const totalCapacity=r1((stockLength-grip)*stockCount);
+
+      let {boards,remaining}=assignBoardsDescending(cuts,stockLength,stockCount,grip,kerf);
+      remaining=gapFill(boards,remaining,stockLength,grip,kerf);
+
+      if(secret){ applyUraMode(boards, stockLength, grip, kerf, tolerance, spareTarget); }
+
+      if(semiMode){
+        remaining.sort((a,b)=>b.target-a.target);
+        remaining=gapFill(boards,remaining,stockLength,grip,kerf);
+      }
+
+      const assignedCutsArray=boards.flatMap(b=>b.cuts);
+      const assigned=statsFromCuts(assignedCutsArray,kerf);
+
+      const shortageMap=new Map();
+      for(const c of remaining) shortageMap.set(c.target,(shortageMap.get(c.target)||0)+1);
+      if(shortageMap.size===0){
+        for(const [t,need] of demand.countByTarget.entries()){
+          const done=assigned.countByTarget.get(t)||0;
+          if(done<need) shortageMap.set(t,need-done);
+        }
+      }
+      const audit={ demandUsage:demand.totalUsage, totalCapacity, assignedUsage:assigned.totalUsage };
+      renderOutput(boards,shortageMap,stockLength,grip,audit);
+    }catch(err){
+      console.error('run() failed:', err);
+      alertError('演算中にエラーが発生しました。入力を確認してください。');
+    }
+  }
+
+  // ========= 初期配線 =========
+  function wire() {
+    // 操作ボタン（誤タップ耐性付き）
+    bindTap($('#btnAdd'),   () => addCutInput());
+    bindTap($('#btnReset'), () => resetCuts());
+    bindTap($('#btnCalc'),  () => run(false));
+
+    // 裏モードボタン：隠しコマンド & 長押し解除（移動でキャンセル）
+    (function bindUra(){
+      const btn = $('#btnUra');
+      if(!btn) return;
+
+      // 短押し：隠しコマンド成立 → 準最適ON（演算しない）／非成立 → 裏モード実行
+      bindTap(btn, () => {
+        const stockLengthVal = Number($('#stockLength').value);
+        if (stockLengthVal === MAGIC) {
+          setSemiMode(true); vibrate(30); return;
+        }
+        run(true);
+      });
+
+      // 長押し3秒で準最適OFF（移動でキャンセル）
+      let lpTimer=null, isDown=false, moved=false, sx=0, sy=0;
+      const THRESH=10;
+
+      const start = (x,y) => {
+        isDown=true; moved=false; sx=x; sy=y;
+        lpTimer = setTimeout(()=>{ if(isDown && !moved){ setSemiMode(false); vibrate(50);} }, 3000);
+      };
+      const move = (e) => {
+        const t = e.touches ? e.touches[0] : e;
+        if (Math.hypot(t.clientX - sx, t.clientY - sy) > THRESH) moved = true;
+      };
+      const end = () => { isDown=false; if(lpTimer){ clearTimeout(lpTimer); lpTimer=null; } };
+
+      btn.addEventListener('touchstart', e => { const t=e.touches[0]; start(t.clientX,t.clientY); }, {passive:true});
+      btn.addEventListener('touchmove', move, {passive:true});
+      btn.addEventListener('touchend',  end);
+      btn.addEventListener('mousedown', e => start(e.clientX,e.clientY));
+      btn.addEventListener('mousemove', move);
+      btn.addEventListener('mouseup',   end);
+      btn.addEventListener('mouseleave',end);
+    })();
+
+    // プリセット（4枠）
+    $$('.btn-preset').forEach(bindLongPressPreset);
+
+    // エクスポート/インポート
+    wireExportImportButtons();
+
+    // 初期行（3行）
+    for (let i = 0; i < 3; i++) addCutInput();
+
+    // 出力領域やページ全体でスクロール検知（保険）
+    window.addEventListener('scroll', markScrolled, { passive:true });
+    $('#result')?.addEventListener('scroll', markScrolled, { passive:true });
+  }
+
+  document.addEventListener('DOMContentLoaded', wire);
+
+  // ====== 互換のためグローバル公開 ======
+  window.addCutInput = addCutInput;
+  window.resetCuts   = resetCuts;
+  window.run         = run;
+})();
