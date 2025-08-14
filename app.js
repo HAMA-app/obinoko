@@ -5,6 +5,24 @@
   const $$ = sel => [...document.querySelectorAll(sel)];
   const vibrate = ms => { if (navigator.vibrate) navigator.vibrate(ms); };
 
+  // null安全に <input> から数値を読む（見つからなければ既定値）
+  function readNum(selector, fallback = 0) {
+    const el = document.querySelector(selector);
+    if (!el) return fallback;
+    const v = el.value;
+    if (v === '' || v == null) return fallback;
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.round(n * 10) / 10 : fallback; // 小数1桁
+  }
+  function readInt(selector, fallback = 0) {
+    const el = document.querySelector(selector);
+    if (!el) return fallback;
+    const v = el.value;
+    if (v === '' || v == null) return fallback;
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
   // ========= iOS対応：ビープ音（初回タップで解禁） =========
   const AudioMgr = (() => {
     let ctx, unlocked = false;
@@ -37,51 +55,53 @@
     return { errorBeep, warnBeep, unlockOnce };
   })();
 
-// スクロール中/直後のタップ無効 + 指移動しきい値 + クリックはフォールバックで許可
-function bindTap(el, handler) {
-  if (!el) return;
-  const THRESH = 10;     // 指の移動が10px超→タップ扱いしない
-  const COOLDOWN = 200;  // スクロール直後200msはタップ無効
-  const DUP_MS = 350;    // 重複抑止の猶予
+  // ========= 誤タップ対策：スクロール監視 & 安全タップ =========
+  let __lastScrollAt = 0;
+  const markScrolled = () => { __lastScrollAt = Date.now(); };
 
-  let startX=0, startY=0, moved=false;
-  let lastHandledAt = 0;
+  // スクロール中/直後のタップ無効 + 指移動しきい値 + クリックはフォールバックで許可
+  function bindTap(el, handler) {
+    if (!el) return;
+    const THRESH = 10;     // 指の移動が10px超→タップ扱いしない
+    const COOLDOWN = 200;  // スクロール直後200msはタップ無効
+    const DUP_MS = 350;    // 重複抑止の猶予
 
-  el.addEventListener('touchstart', (e) => {
-    const t = e.touches[0];
-    startX = t.clientX; startY = t.clientY; moved = false;
-  }, { passive:true });
+    let startX=0, startY=0, moved=false;
+    let lastHandledAt = 0;
 
-  el.addEventListener('touchmove', (e) => {
-    const t = e.touches[0];
-    if (Math.hypot(t.clientX - startX, t.clientY - startY) > THRESH) moved = true;
-  }, { passive:true });
+    el.addEventListener('touchstart', (e) => {
+      const t = e.touches[0];
+      startX = t.clientX; startY = t.clientY; moved = false;
+    }, { passive:true });
 
-  el.addEventListener('touchend', (e) => {
-    if (moved) return;
-    if (Date.now() - __lastScrollAt < COOLDOWN) return;
-    e.preventDefault();              // ゴーストクリック軽減（※ click は殺さない）
-    lastHandledAt = Date.now();
-    handler(e);
-  }, { passive:false });
+    el.addEventListener('touchmove', (e) => {
+      const t = e.touches[0];
+      if (Math.hypot(t.clientX - startX, t.clientY - startY) > THRESH) moved = true;
+    }, { passive:true });
 
-  el.addEventListener('pointerup', (e) => {
-    if (Date.now() - __lastScrollAt < COOLDOWN) return;
-    lastHandledAt = Date.now();
-    handler(e);
-  });
+    el.addEventListener('touchend', (e) => {
+      if (moved) return;
+      if (Date.now() - __lastScrollAt < COOLDOWN) return;
+      e.preventDefault();              // ゴーストクリック軽減（※ click は殺さない）
+      lastHandledAt = Date.now();
+      handler(e);
+    }, { passive:false });
 
-  // ★ ここが重要：click はフォールバックとして許可。
-  // ただし直前に touch/pointer を処理済みなら重複扱いで無視。
-  el.addEventListener('click', (e) => {
-    if (Date.now() - lastHandledAt < DUP_MS) {
-      e.preventDefault(); // 直前処理と重複ならキャンセル
-      return;
-    }
-    // 直前処理が無い＝PWAで click しか来ていないケース → 正常に発火させる
-    handler(e);
-  }, true);
-}
+    el.addEventListener('pointerup', (e) => {
+      if (Date.now() - __lastScrollAt < COOLDOWN) return;
+      lastHandledAt = Date.now();
+      handler(e);
+    });
+
+    // click はフォールバックとして許可（ただし直前のtouch/pointer処理と重複なら無視）
+    el.addEventListener('click', (e) => {
+      if (Date.now() - lastHandledAt < DUP_MS) {
+        e.preventDefault();
+        return;
+      }
+      handler(e);
+    }, true);
+  }
 
   // ========= 準最適モード（隠し）フラグ =========
   let semiMode = false; // true: 準最適ON（背景を薄紫に）
@@ -105,24 +125,24 @@ function bindTap(el, handler) {
       cuts.push({ length: r1(L), qty: Math.trunc(Q) });
     }
     return {
-      stockLength: r1(Number($('#stockLength').value || 0)),
-      stockCount: Math.trunc(Number($('#stockCount').value || 0)),
-      grip: r1(Number($('#grip').value || 0)),
-      tolerance: r1(Number($('#tolerance').value || 0)),
-      kerf: r1(Number($('#kerf').value || 0)),
-      spareTarget: $('#spareTarget').value === '' ? null : r1(Number($('#spareTarget').value)),
+      stockLength: readNum('#stockLength', 0),
+      stockCount : readInt('#stockCount', 0),
+      grip       : readNum('#grip', 0),
+      tolerance  : readNum('#tolerance', 0),
+      kerf       : readNum('#kerf', 0),
+      spareTarget: (document.querySelector('#spareTarget')?.value ?? '') === '' ? null : readNum('#spareTarget', null),
       cuts
     };
   }
 
   function setUIState(s) {
     if (!s) return;
-    $('#stockLength').value = s.stockLength ?? 0;
-    $('#stockCount').value  = s.stockCount  ?? 0;
-    $('#grip').value        = s.grip        ?? 0;
-    $('#tolerance').value   = s.tolerance   ?? 0;
-    $('#kerf').value        = s.kerf        ?? 0;
-    $('#spareTarget').value = s.spareTarget ?? '';
+    if ($('#stockLength')) $('#stockLength').value = s.stockLength ?? 0;
+    if ($('#stockCount'))  $('#stockCount').value  = s.stockCount  ?? 0;
+    if ($('#grip'))        $('#grip').value        = s.grip        ?? 0;
+    if ($('#tolerance'))   $('#tolerance').value   = s.tolerance   ?? 0;
+    if ($('#kerf'))        $('#kerf').value        = s.kerf        ?? 0;
+    if ($('#spareTarget')) $('#spareTarget').value = s.spareTarget ?? '';
     resetCuts();
     (s.cuts || []).forEach(c => addCutInput(c.length, c.qty));
   }
@@ -242,13 +262,13 @@ function bindTap(el, handler) {
       <input type="number" class="length" placeholder="長さ" aria-label="長さ(mm)" value="${length}">
       <input type="number" class="qty" placeholder="個数" aria-label="個数(本)" value="${qty}">
     `;
-    $('#cutInputs').appendChild(row);
+    $('#cutInputs')?.appendChild(row);
     cutRowCount++;
   }
   function resetCuts() {
-    $('#cutInputs').innerHTML = '';
+    if ($('#cutInputs')) $('#cutInputs').innerHTML = '';
     cutRowCount = 0;
-    $('#result').textContent = '';
+    if ($('#result')) $('#result').textContent = '';
   }
 
   // ========= エラーアラート =========
@@ -340,7 +360,7 @@ function bindTap(el, handler) {
     ranges.push(s===p?`${s}`:`${s}〜${p}`); return ranges.join(',');
   }
 
-  function renderOutput(boards,shortageMap,stockLength,grip,audit){
+  function renderOutput(boards,shortageMap,stockLength,grip,audit,kerf){
     const SL=Number(stockLength), GR=Number(grip);
     const sigMap=new Map();
     for(const b of boards){
@@ -363,7 +383,7 @@ function bindTap(el, handler) {
         const tgt=Number(row.target).toFixed(1);
         const qty=row.count;
         const usedLen=(Number(row.target)*qty).toFixed(1);
-        const kerfSum=(qty*Number($('#kerf').value)).toFixed(1);
+        const kerfSum=(qty*Number(kerf||0)).toFixed(1); // DOMから読まず引数を使用
         rowsHtml += `<tr>
           ${i===0?`<td class="group-head" rowspan="${tally.length}">${group}</td>`:``}
           <td class="num">${tgt}${row.meta==='URAMODE' ? ' <span class="subtle">(捨て切り)</span>' : ''}</td>
@@ -404,7 +424,7 @@ function bindTap(el, handler) {
 
     $('#result').innerHTML = tableHtml + below;
 
-    // ★ スクロール中/直後タップ抑止のための監視（ここでDOMにぶら下げる）
+    // スクロール中/直後タップ抑止のための監視
     $('#result').querySelectorAll('.table-wrap').forEach(el => {
       el.addEventListener('scroll',    markScrolled, { passive:true });
       el.addEventListener('touchmove', markScrolled, { passive:true });
@@ -432,17 +452,23 @@ function bindTap(el, handler) {
 
   function run(secret=false){
     try{
-      const stockLength = r1(Number($('#stockLength').value));
-      const stockCount  = Math.trunc(Number($('#stockCount').value));
-      const grip        = r1(Number($('#grip').value));
-      const kerf        = r1(Number($('#kerf').value));
-      const tolerance   = r1(Number($('#tolerance').value));
-      const spareTarget = $('#spareTarget').value===''? null : r1(Number($('#spareTarget').value));
-      $('#result').textContent='';
+      const stockLength = readNum('#stockLength', 0);
+      const stockCount  = readInt('#stockCount', 0);
+      const grip        = readNum('#grip', 0);
+      const kerf        = readNum('#kerf', 0);
+      const tolerance   = readNum('#tolerance', 0);
+
+      // spareTarget は「空なら null」を許容
+      const spareEl = document.querySelector('#spareTarget');
+      const spareTarget = (spareEl && spareEl.value !== '') ? readNum('#spareTarget', null) : null;
+
+      if ($('#result')) $('#result').textContent='';
 
       const cuts=buildCutsForCalc(tolerance);
       if(cuts.length===0 || stockCount<=0 || stockLength<=0){
-        $('#result').textContent='入力が不足しています。'; AudioMgr.warnBeep(); return;
+        if ($('#result')) $('#result').textContent='入力が不足しています。';
+        AudioMgr.warnBeep();
+        return;
       }
       const demand=statsFromCuts(cuts,kerf);
       const totalCapacity=r1((stockLength-grip)*stockCount);
@@ -469,7 +495,7 @@ function bindTap(el, handler) {
         }
       }
       const audit={ demandUsage:demand.totalUsage, totalCapacity, assignedUsage:assigned.totalUsage };
-      renderOutput(boards,shortageMap,stockLength,grip,audit);
+      renderOutput(boards,shortageMap,stockLength,grip,audit,kerf);
     }catch(err){
       console.error('run() failed:', err);
       alertError('演算中にエラーが発生しました。入力を確認してください。');
@@ -478,7 +504,7 @@ function bindTap(el, handler) {
 
   // ========= 初期配線 =========
   function wire() {
-    // 操作ボタン（誤タップ耐性付き）
+    // 操作ボタン
     bindTap($('#btnAdd'),   () => addCutInput());
     bindTap($('#btnReset'), () => resetCuts());
     bindTap($('#btnCalc'),  () => run(false));
@@ -490,7 +516,7 @@ function bindTap(el, handler) {
 
       // 短押し：隠しコマンド成立 → 準最適ON（演算しない）／非成立 → 裏モード実行
       bindTap(btn, () => {
-        const stockLengthVal = Number($('#stockLength').value);
+        const stockLengthVal = readNum('#stockLength', 0);
         if (stockLengthVal === MAGIC) {
           setSemiMode(true); vibrate(30); return;
         }
