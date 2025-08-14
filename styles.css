@@ -89,3 +89,29 @@ body.semi-mode{
   /* 見た目は控えめな薄紫。必要なら色は調整してください */
   background: linear-gradient(180deg, #1c1424, #221a2b 60%) !important;
 }
+/* ---- 誤タップ/選択抑止（iPhone最適化） ---- */
+* { -webkit-tap-highlight-color: transparent; }
+
+.btn, .btn-preset, .btn-row button {
+  touch-action: manipulation;         /* ダブルタップズーム抑止＆クリック遅延防止 */
+  -webkit-user-select: none;
+  user-select: none;                  /* 長押し選択を防ぐ */
+  -webkit-touch-callout: none;        /* 長押しメニュー無効 */
+}
+
+.settings, .input-sheet, .presets, .btn-row, body {
+  touch-action: pan-y;                /* 縦スクロールのみ許可（横スワイプで誤クリックを防止） */
+}
+
+.table-wrap {
+  -webkit-overflow-scrolling: touch;  /* スクロール慣性 */
+}
+
+.result {
+  /* 出力は基本選択不要なら選択不可に（必要ならここを外してOK） */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* ボタン同士が近すぎると誤タップするので、最小間隔を確保 */
+.btn-row { gap: 12px; }
