@@ -1,41 +1,30 @@
-// sw.js
-const CACHE = "obikyo-v22"; // 版数は更新のたびに変える
+const CACHE_NAME = 'obikyo-cache-v2025-08-16';
 const ASSETS = [
-  "./",
-  "./index.html",
-  "./manifest.json",
-  "./sw.js",
-  "./beep.mp3",
-  "./icon-180.png",
-  "./icon-192.png",
-  "./icon-512.png"
+  './',
+  'index.html?v=2025-08-16',
+  'styles.css?v=2025-08-16',
+  'app.js?v=2025-08-16',
+  'manifest.json?v=2025-08-16',
+  'icon-180.png'
 ];
 
-self.addEventListener("install", e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
+self.addEventListener('install', e=>{
+  e.waitUntil(caches.open(CACHE_NAME).then(c=>c.addAll(ASSETS)));
   self.skipWaiting();
 });
-
-self.addEventListener("activate", e => {
-  e.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
-    )
-  );
+self.addEventListener('activate', e=>{
+  e.waitUntil(caches.keys().then(keys=>Promise.all(keys.map(k=>k!==CACHE_NAME?caches.delete(k):null))));
   self.clients.claim();
 });
-
-self.addEventListener("fetch", e => {
-  const req = e.request;
-  // Offline-first（まずキャッシュ、なければネット）
+self.addEventListener('fetch', e=>{
+  if(e.request.method!=='GET') return;
   e.respondWith(
-    caches.match(req).then(cached => cached || fetch(req).then(res => {
-      // 動的に取得できたものも静的資産ならキャッシュへ
-      const clone = res.clone();
-      if (req.method === "GET" && req.url.startsWith(self.location.origin)) {
-        caches.open(CACHE).then(c => c.put(req, clone));
+    caches.match(e.request).then(cached=>cached || fetch(e.request).then(res=>{
+      const url=new URL(e.request.url);
+      if(url.origin===location.origin){
+        const clone=res.clone(); caches.open(CACHE_NAME).then(c=>c.put(e.request, clone));
       }
       return res;
-    }).catch(() => cached))
+    }).catch(()=>cached))
   );
 });

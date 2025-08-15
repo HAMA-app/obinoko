@@ -1,402 +1,275 @@
 (() => {
-  // ========= 共通ヘルパ =========
+  /* ==== ヘルパ ==== */
   const r1 = v => Math.round(v * 10) / 10;
   const $  = sel => document.querySelector(sel);
   const $$ = sel => [...document.querySelectorAll(sel)];
   const vibrate = ms => { if (navigator.vibrate) navigator.vibrate(ms); };
 
-  // null安全に <input> から数値を読む（見つからなければ既定値）
-  function readNum(selector, fallback = 0) {
-    const el = document.querySelector(selector);
-    if (!el) return fallback;
-    const v = el.value;
-    if (v === '' || v == null) return fallback;
-    const n = Number(v);
-    return Number.isFinite(n) ? Math.round(n * 10) / 10 : fallback; // 小数1桁
-  }
-  function readInt(selector, fallback = 0) {
-    const el = document.querySelector(selector);
-    if (!el) return fallback;
-    const v = el.value;
-    if (v === '' || v == null) return fallback;
-    const n = parseInt(v, 10);
-    return Number.isFinite(n) ? n : fallback;
-  }
+  const readNum = (sel, fb=0) => {
+    const el = $(sel); if (!el) return fb;
+    const v = el.value; if (v === '' || v == null) return fb;
+    const n = Number(v); return Number.isFinite(n) ? r1(n) : fb;
+  };
+  const readInt = (sel, fb=0) => {
+    const el = $(sel); if (!el) return fb;
+    const v = el.value; if (v === '' || v == null) return fb;
+    const n = parseInt(v,10); return Number.isFinite(n) ? n : fb;
+  };
 
-  // ========= iOS対応：ビープ音（初回タップで解禁） =========
+  /* ==== 音（iOS解禁対応） ==== */
   const AudioMgr = (() => {
-    let ctx, unlocked = false;
-    function ensure() {
-      if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
-      return ctx;
-    }
-    function unlockOnce() {
-      if (unlocked) return;
-      try { ensure().resume(); unlocked = true; } catch (e) {}
-    }
-    function beep(freq=880, ms=180, type='sine', vol=0.22) {
-      try {
-        const c = ensure();
-        const o = c.createOscillator();
-        const g = c.createGain();
-        o.type = type; o.frequency.value = freq;
+    let ctx, unlocked=false;
+    const ensure = () => (ctx ||= new (window.AudioContext||window.webkitAudioContext)());
+    const unlock = () => { if (unlocked) return; try{ ensure().resume(); unlocked=true; }catch(e){} };
+    const beep = (f=880, ms=180, type='sine', vol=0.22) => {
+      try{
+        const c=ensure(), o=c.createOscillator(), g=c.createGain();
+        o.type=type; o.frequency.value=f;
         g.gain.setValueAtTime(0, c.currentTime);
-        g.gain.linearRampToValueAtTime(vol, c.currentTime + 0.01);
-        g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + ms/1000);
-        o.connect(g).connect(c.destination);
-        o.start();
-        o.stop(c.currentTime + ms/1000 + 0.05);
-      } catch (e) {}
-    }
-    function errorBeep(){ beep(300,140,'square',0.28); setTimeout(()=>beep(220,200,'square',0.28),120); }
-    function warnBeep(){  beep(700,180,'sawtooth',0.22); }
-    document.addEventListener('pointerdown', unlockOnce, { once:true, capture:true });
-    document.addEventListener('touchstart',  unlockOnce, { once:true, capture:true });
-    return { errorBeep, warnBeep, unlockOnce };
+        g.gain.linearRampToValueAtTime(vol, c.currentTime+0.01);
+        g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime+ms/1000);
+        o.connect(g).connect(c.destination); o.start(); o.stop(c.currentTime+ms/1000+0.05);
+      }catch(e){}
+    };
+    const errorBeep=()=>{ beep(300,140,'square',0.28); setTimeout(()=>beep(220,200,'square',0.28),120); };
+    const warnBeep =()=>{ beep(700,180,'sawtooth',0.22); };
+    document.addEventListener('pointerdown', unlock, { once:true, capture:true });
+    document.addEventListener('touchstart',  unlock, { once:true, capture:true });
+    return { errorBeep, warnBeep };
   })();
 
-  // ========= 誤タップ対策：スクロール監視 & 安全タップ =========
+  /* ==== 誤タップ対策タップバインダ ==== */
   let __lastScrollAt = 0;
   const markScrolled = () => { __lastScrollAt = Date.now(); };
+  function bindTap(el, handler){
+    if(!el) return;
+    const THRESH=10, COOLDOWN=200, DUP_MS=350;
+    let sx=0, sy=0, moved=false, lastAt=0;
 
-  // スクロール中/直後のタップ無効 + 指移動しきい値 + クリックはフォールバックで許可
-  function bindTap(el, handler) {
-    if (!el) return;
-    const THRESH = 10;     // 指の移動が10px超→タップ扱いしない
-    const COOLDOWN = 200;  // スクロール直後200msはタップ無効
-    const DUP_MS = 350;    // 重複抑止の猶予
-
-    let startX=0, startY=0, moved=false;
-    let lastHandledAt = 0;
-
-    el.addEventListener('touchstart', (e) => {
-      const t = e.touches[0];
-      startX = t.clientX; startY = t.clientY; moved = false;
-    }, { passive:true });
-
-    el.addEventListener('touchmove', (e) => {
-      const t = e.touches[0];
-      if (Math.hypot(t.clientX - startX, t.clientY - startY) > THRESH) moved = true;
-    }, { passive:true });
-
-    el.addEventListener('touchend', (e) => {
-      if (moved) return;
-      if (Date.now() - __lastScrollAt < COOLDOWN) return;
-      e.preventDefault();              // ゴーストクリック軽減（※ click は殺さない）
-      lastHandledAt = Date.now();
-      handler(e);
-    }, { passive:false });
-
-    el.addEventListener('pointerup', (e) => {
-      if (Date.now() - __lastScrollAt < COOLDOWN) return;
-      lastHandledAt = Date.now();
-      handler(e);
+    el.addEventListener('touchstart', e => {
+      const t=e.touches[0]; sx=t.clientX; sy=t.clientY; moved=false;
+    }, {passive:true});
+    el.addEventListener('touchmove', e => {
+      const t=e.touches[0]; if (Math.hypot(t.clientX-sx, t.clientY-sy) > THRESH) moved=true;
+    }, {passive:true});
+    el.addEventListener('touchend', e => {
+      if (moved) return; if (Date.now()-__lastScrollAt<COOLDOWN) return;
+      e.preventDefault(); lastAt=Date.now(); handler(e);
+    }, {passive:false});
+    el.addEventListener('pointerup', e => {
+      if (Date.now()-__lastScrollAt<COOLDOWN) return; lastAt=Date.now(); handler(e);
     });
-
-    // click はフォールバックとして許可（ただし直前のtouch/pointer処理と重複なら無視）
-    el.addEventListener('click', (e) => {
-      if (Date.now() - lastHandledAt < DUP_MS) {
-        e.preventDefault();
-        return;
-      }
-      handler(e);
+    el.addEventListener('click', e => {
+      if (Date.now()-lastAt < DUP_MS) { e.preventDefault(); return; } handler(e);
     }, true);
   }
 
-  // ========= 準最適モード（隠し）フラグ =========
-  let semiMode = false; // true: 準最適ON（背景を薄紫に）
-  const MAGIC = 77777.7;
-  function setSemiMode(on){
-    semiMode = !!on;
-    document.body.classList.toggle('semi-mode', semiMode);
-  }
+  /* ==== 準最適モード（隠し） ==== */
+  let semiMode=false;
+  const MAGIC=77777.7;
+  const setSemiMode = on => {
+    semiMode=!!on; document.body.classList.toggle('semi-mode', semiMode);
+  };
 
-  // ========= プリセット保存（localStorage） =========
-  const PRESET_KEY = slot => `obikyo_preset_v1_${slot}`;
-
-  function getUIState() {
-    const cuts = [];
-    const lengths = $$('#cutInputs .length');
-    const qtys = $$('#cutInputs .qty');
-    for (let i = 0; i < lengths.length; i++) {
-      const L = Number(lengths[i].value);
-      const Q = Number(qtys[i].value);
-      if (!L || !Q) continue;
-      cuts.push({ length: r1(L), qty: Math.trunc(Q) });
+  /* ==== プリセット ==== */
+  const PRESET_KEY = s => `obikyo_preset_v1_${s}`;
+  const getUIState = () => {
+    const cuts=[], L=$$('#cutInputs .length'), Q=$$('#cutInputs .qty');
+    for(let i=0;i<L.length;i++){
+      const len=Number(L[i].value), qty=Number(Q[i].value);
+      if(!len||!qty) continue; cuts.push({ length:r1(len), qty:Math.trunc(qty) });
     }
     return {
-      stockLength: readNum('#stockLength', 0),
-      stockCount : readInt('#stockCount', 0),
-      grip       : readNum('#grip', 0),
-      tolerance  : readNum('#tolerance', 0),
-      kerf       : readNum('#kerf', 0),
-      spareTarget: (document.querySelector('#spareTarget')?.value ?? '') === '' ? null : readNum('#spareTarget', null),
+      stockLength: readNum('#stockLength',0),
+      stockCount : readInt('#stockCount',0),
+      grip       : readNum('#grip',0),
+      tolerance  : readNum('#tolerance',0),
+      kerf       : readNum('#kerf',0),
+      spareTarget: ($('#spareTarget')?.value ?? '')==='' ? null : readNum('#spareTarget', null),
       cuts
     };
-  }
-
-  function setUIState(s) {
-    if (!s) return;
-    if ($('#stockLength')) $('#stockLength').value = s.stockLength ?? 0;
-    if ($('#stockCount'))  $('#stockCount').value  = s.stockCount  ?? 0;
-    if ($('#grip'))        $('#grip').value        = s.grip        ?? 0;
-    if ($('#tolerance'))   $('#tolerance').value   = s.tolerance   ?? 0;
-    if ($('#kerf'))        $('#kerf').value        = s.kerf        ?? 0;
-    if ($('#spareTarget')) $('#spareTarget').value = s.spareTarget ?? '';
-    resetCuts();
-    (s.cuts || []).forEach(c => addCutInput(c.length, c.qty));
-  }
-
-  function savePreset(slot) {
-    const state = getUIState();
-    const payload = { meta: { savedAt: new Date().toISOString() }, state };
-    localStorage.setItem(PRESET_KEY(slot), JSON.stringify(payload));
-    vibrate(80);
-    alert(`カスタム${slot}に保存しました。`);
-  }
-
-  function loadPreset(slot) {
-    const raw = localStorage.getItem(PRESET_KEY(slot));
-    if (!raw) { alert(`カスタム${slot}は未保存です。長押しで保存できます。`); return; }
-    const data = JSON.parse(raw);
-    setUIState(data.state);
-    vibrate(30);
-  }
-
-  // 長押し/短押し（タップ=呼出、長押し=保存）誤タップ耐性付き
-  function bindLongPressPreset(btn) {
-    let timer = null, pressed = false, moved = false;
-    const slot = btn.dataset.slot;
-    const THRESH = 10;
-
-    const onStart = (x, y) => {
-      pressed = true; moved = false;
-      const sx = x, sy = y;
-      timer = setTimeout(() => { if (!moved) { pressed = false; savePreset(slot); } }, 650);
-
-      const move = (e) => {
-        const t = e.touches ? e.touches[0] : e;
-        if (Math.hypot(t.clientX - sx, t.clientY - sy) > THRESH) moved = true;
+  };
+  const setUIState = s => {
+    if(!s) return;
+    $('#stockLength')&&( $('#stockLength').value=s.stockLength ?? 0 );
+    $('#stockCount') &&( $('#stockCount').value =s.stockCount  ?? 0 );
+    $('#grip')       &&( $('#grip').value       =s.grip        ?? 0 );
+    $('#tolerance')  &&( $('#tolerance').value  =s.tolerance   ?? 0 );
+    $('#kerf')       &&( $('#kerf').value       =s.kerf        ?? 0 );
+    $('#spareTarget')&&( $('#spareTarget').value=s.spareTarget ?? '' );
+    resetCuts(); (s.cuts||[]).forEach(c=>addCutInput(c.length,c.qty));
+  };
+  const savePreset = slot => {
+    localStorage.setItem(PRESET_KEY(slot), JSON.stringify({ meta:{savedAt:new Date().toISOString()}, state:getUIState() }));
+    vibrate(80); alert(`カスタム${slot}に保存しました。`);
+  };
+  const loadPreset = slot => {
+    const raw=localStorage.getItem(PRESET_KEY(slot));
+    if(!raw){ alert(`カスタム${slot}は未保存です。長押しで保存できます。`); return; }
+    setUIState(JSON.parse(raw).state); vibrate(30);
+  };
+  const bindLongPressPreset = btn => {
+    const slot=btn.dataset.slot; let timer=null, pressed=false, moved=false; const THRESH=10;
+    const start=(x,y)=>{
+      pressed=true; moved=false; const sx=x, sy=y;
+      timer=setTimeout(()=>{ if(!moved){ pressed=false; savePreset(slot);} },650);
+      const move=e=>{ const t=e.touches?e.touches[0]:e; if(Math.hypot(t.clientX-sx,t.clientY-sy)>THRESH) moved=true; };
+      const end =()=>{
+        if(timer) clearTimeout(timer);
+        if(pressed && !moved) loadPreset(slot);
+        pressed=false;
+        btn.removeEventListener('touchmove',move); btn.removeEventListener('touchend',end);
+        btn.removeEventListener('mouseup',end); btn.removeEventListener('mouseleave',end);
       };
-      const end = () => {
-        if (timer) clearTimeout(timer);
-        if (pressed && !moved) loadPreset(slot);  // 短押し（呼出）
-        pressed = false;
-        btn.removeEventListener('touchmove', move);
-        btn.removeEventListener('touchend', end);
-        btn.removeEventListener('mouseup', end);
-        btn.removeEventListener('mouseleave', end);
-      };
-
-      btn.addEventListener('touchmove', move, { passive:true });
-      btn.addEventListener('touchend', end);
-      btn.addEventListener('mouseup', end);
-      btn.addEventListener('mouseleave', end);
+      btn.addEventListener('touchmove',move,{passive:true});
+      btn.addEventListener('touchend',end);
+      btn.addEventListener('mouseup',end);
+      btn.addEventListener('mouseleave',end);
     };
+    btn.addEventListener('touchstart',e=>{const t=e.touches[0]; start(t.clientX,t.clientY);},{passive:true});
+    btn.addEventListener('mousedown',e=>start(e.clientX,e.clientY));
+    btn.addEventListener('click',e=>e.preventDefault(),true);
+  };
 
-    btn.addEventListener('touchstart', e => {
-      const t = e.touches[0]; onStart(t.clientX, t.clientY);
-    }, { passive:true });
-    btn.addEventListener('mousedown', e => { onStart(e.clientX, e.clientY); });
-    btn.addEventListener('click', e => e.preventDefault(), true);
-  }
+  /* ==== 一括入出力 ==== */
+  const dumpAll = () => {
+    const data={}, slots=[1,2,3,4];
+    for(const s of slots){ const raw=localStorage.getItem(PRESET_KEY(s)); if(raw) data[s]=JSON.parse(raw); }
+    return { version:1, exportedAt:new Date().toISOString(), data };
+  };
+  const loadAll = obj => {
+    if(!obj||!obj.data) throw new Error('不正なファイルです');
+    for(const s of Object.keys(obj.data)){ localStorage.setItem(PRESET_KEY(s), JSON.stringify(obj.data[s])); }
+  };
+  const downloadText=(name,text)=>{
+    const url=URL.createObjectURL(new Blob([text],{type:'application/json'}));
+    const a=document.createElement('a'); a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  };
 
-  // === すべてのプリセットをまとめてエクスポート/インポート ===
-  function dumpAllPresets() {
-    const slots = [1,2,3,4];
-    const data = {};
-    for (const s of slots) {
-      const raw = localStorage.getItem(PRESET_KEY(s));
-      if (raw) data[s] = JSON.parse(raw);
-    }
-    return { version: 1, exportedAt: new Date().toISOString(), data };
-  }
-  function loadAllPresets(obj) {
-    if (!obj || !obj.data) throw new Error('不正なファイルです');
-    for (const s of Object.keys(obj.data)) {
-      localStorage.setItem(PRESET_KEY(s), JSON.stringify(obj.data[s]));
-    }
-  }
-  function downloadText(filename, text) {
-    const blob = new Blob([text], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = filename;
-    document.body.appendChild(a); a.click();
-    a.remove(); URL.revokeObjectURL(url);
-  }
-  function wireExportImportButtons() {
-    const btnExport = $('#btnExport');
-    const btnImport = $('#btnImport');
-    const inputFile = $('#importFile');
-
-    bindTap(btnExport, () => {
-      const payload = dumpAllPresets();
-      downloadText('obikyo-presets.json', JSON.stringify(payload, null, 2));
-    });
-    bindTap(btnImport, () => inputFile && inputFile.click());
-    inputFile?.addEventListener('change', async (e) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      try {
-        const text = await file.text();
-        const obj = JSON.parse(text);
-        loadAllPresets(obj);
-        alert('インポート完了：カスタム1〜4に読み込みました。');
-      } catch (err) {
-        console.error(err);
-        alert('インポートに失敗しました。ファイルを確認してください。');
-      } finally {
-        inputFile.value = '';
-      }
-    });
-  }
-
-  // ========= 入力行 =========
-  let cutRowCount = 0;
-  function addCutInput(length = "", qty = "") {
-    if (cutRowCount >= 30) return;
-    const row = document.createElement('div');
-    row.className = 'cut-input';
-    row.innerHTML = `
-      <input type="number" class="length" placeholder="長さ" aria-label="長さ(mm)" value="${length}">
-      <input type="number" class="qty" placeholder="個数" aria-label="個数(本)" value="${qty}">
+  /* ==== 入力行 ==== */
+  let cutRowCount=0;
+  function addCutInput(length="", qty=""){
+    if(cutRowCount>=30) return;
+    const row=document.createElement('div');
+    row.className='cut-input';
+    row.innerHTML=`
+      <input type="number" class="length" inputmode="decimal" step="0.1" placeholder="00000.0" value="${length}">
+      <input type="number" class="qty"    inputmode="numeric" step="1"    placeholder="00000"   value="${qty}">
     `;
-    $('#cutInputs')?.appendChild(row);
-    cutRowCount++;
+    $('#cutInputs')?.appendChild(row); cutRowCount++;
   }
-  function resetCuts() {
-    if ($('#cutInputs')) $('#cutInputs').innerHTML = '';
-    cutRowCount = 0;
-    if ($('#result')) $('#result').textContent = '';
+  function resetCuts(){
+    const wrap=$('#cutInputs'); if(wrap) wrap.innerHTML=''; cutRowCount=0;
+    const out=$('#result'); if(out) out.textContent='';
   }
 
-  // ========= エラーアラート =========
-  function alertError(msg){
-    try { alert(msg); } catch(e) {}
-    if (navigator.vibrate) { navigator.vibrate(240); } // iOSは無視される
-    AudioMgr.errorBeep();
-  }
+  /* ==== エラー通知 ==== */
+  const alertError = msg => { try{ alert(msg); }catch(e){} vibrate(240); AudioMgr.errorBeep(); };
 
-  // ========= 演算ロジック =========
+  /* ==== 演算ロジック ==== */
   function buildCutsForCalc(tolerance){
-    const cuts=[];
-    const lengths=$$('#cutInputs .length');
-    const qtys=$$('#cutInputs .qty');
-    for(let i=0;i<lengths.length;i++){
-      const target=Number(lengths[i].value);
-      const qty=Number(qtys[i].value);
-      if(!target||!qty) continue;
-      const input=r1(target-Number(tolerance)); // 機械設定
-      for(let j=0;j<qty;j++) cuts.push({target:r1(target), input});
+    const cuts=[], L=$$('#cutInputs .length'), Q=$$('#cutInputs .qty');
+    for(let i=0;i<L.length;i++){
+      const t=Number(L[i].value), q=Number(Q[i].value);
+      if(!t||!q) continue;
+      const input=r1(t-Number(tolerance));
+      for(let k=0;k<q;k++) cuts.push({ target:r1(t), input });
     }
     return cuts;
   }
-
   function statsFromCuts(cuts,kerf){
-    const map=new Map(); let totalCuts=0,totalUsage=0;
-    for(const c of cuts){ map.set(c.target,(map.get(c.target)||0)+1); totalCuts++; totalUsage+=r1(c.target+kerf); }
-    return {countByTarget:map,totalCuts,totalUsage};
+    const map=new Map(); let totalUsage=0;
+    for(const c of cuts){ map.set(c.target,(map.get(c.target)||0)+1); totalUsage+=r1(c.target+kerf); }
+    return { countByTarget:map, totalUsage };
   }
+  function assignBoardsDescending(cuts,stockLen,stockCnt,grip,kerf){
+    const boards=Array.from({length:stockCnt},(_,i)=>({id:i+1,cuts:[],used:0}));
+    let remain=cuts.slice().sort((a,b)=>b.target-a.target);
+    const CAND= semiMode?120:60, NODE= semiMode?100000:20000;
 
-  function assignBoardsDescending(cuts,stockLength,stockCount,grip,kerf){
-    const boards=Array.from({length:stockCount},(_,i)=>({id:i+1,cuts:[],used:0}));
-    let remaining=cuts.slice().sort((a,b)=>b.target-a.target);
-
-    // 準最適モードでは候補/ノード上限を上げて探索を深くする
-    const CANDIDATE_LIMIT = semiMode ? 120 : 60;
-    const NODE_LIMIT      = semiMode ? 100000 : 20000;
-
-    for(const board of boards){
-      if(remaining.length===0) break;
-      const capacity=r1(stockLength-grip);
-      const pool=remaining.slice(0,Math.min(CANDIDATE_LIMIT,remaining.length));
-      let bestPlan=[],bestUsed=0,nodes=0;
-
-      (function dfs(idx,used,chosen){
-        if(++nodes>NODE_LIMIT) return;
-        if(used>bestUsed){bestUsed=used;bestPlan=chosen.slice();}
+    for(const b of boards){
+      if(remain.length===0) break;
+      const cap=r1(stockLen-grip), pool=remain.slice(0,Math.min(CAND,remain.length));
+      let best=[], usedBest=0, nodes=0;
+      (function dfs(idx,used,sel){
+        if(++nodes>NODE) return;
+        if(used>usedBest){ usedBest=used; best=sel.slice(); }
         for(let i=idx;i<pool.length;i++){
-          const c=pool[i], need=r1(c.target+kerf);
-          if(used+need>capacity) continue;
-          chosen.push(c); dfs(i+1,r1(used+need),chosen); chosen.pop();
+          const need=r1(pool[i].target+kerf);
+          if(used+need>cap) continue;
+          sel.push(pool[i]); dfs(i+1,r1(used+need),sel); sel.pop();
         }
       })(0,0,[]);
-      board.cuts=bestPlan;
-      board.used=bestPlan.reduce((s,c)=>r1(s+c.target+kerf),0);
-      const set=new Set(bestPlan);
-      remaining=remaining.filter(x=>!set.has(x));
+      b.cuts=best; b.used=best.reduce((s,c)=>r1(s+c.target+kerf),0);
+      const chosen=new Set(best); remain=remain.filter(x=>!chosen.has(x));
     }
-    return {boards,remaining};
+    return { boards, remaining:remain };
   }
-
-  function gapFill(boards,remaining,stockLength,grip,kerf){
-    remaining.sort((a,b)=>a.target-b.target);
-    for(const board of boards){
-      let cap=r1((stockLength-grip)-board.used); if(cap<=0) continue;
-      for(let i=0;i<remaining.length && cap>0;){
-        const c=remaining[i], need=r1(c.target+kerf);
-        if(need<=cap+1e-9){ board.cuts.push(c); board.used=r1(board.used+need); cap=r1(cap-need); remaining.splice(i,1); }
+  function gapFill(boards,remain,stockLen,grip,kerf){
+    remain.sort((a,b)=>a.target-b.target);
+    for(const b of boards){
+      let cap=r1((stockLen-grip)-b.used); if(cap<=0) continue;
+      for(let i=0;i<remain.length && cap>0;){
+        const need=r1(remain[i].target+kerf);
+        if(need<=cap+1e-9){ b.cuts.push(remain[i]); b.used=r1(b.used+need); cap=r1(cap-need); remain.splice(i,1); }
         else break;
       }
-      const capMax=r1(stockLength-grip); if(board.used>capMax) board.used=capMax;
+      const max=r1(stockLen-grip); if(b.used>max) b.used=max;
     }
-    return remaining;
+    return remain;
   }
-
   function tallyCuts(cuts){
-    const map=new Map();
+    const m=new Map();
     for(const c of cuts){
       const key=`${c.input}->${c.target}`;
-      if(!map.has(key)) map.set(key,{input:c.input,target:c.target,count:0,meta:c.meta||''});
-      map.get(key).count++;
+      if(!m.has(key)) m.set(key,{input:c.input,target:c.target,count:0,meta:c.meta||''});
+      m.get(key).count++;
     }
-    return Array.from(map.values()).sort((a,b)=>a.target-b.target||a.input-b.input);
+    return [...m.values()].sort((a,b)=>a.target-b.target||a.input-b.input);
   }
-
-  function compressIds(ids){
-    ids.sort((a,b)=>a-b); const ranges=[]; let s=ids[0],p=ids[0];
-    for(let i=1;i<ids.length;i++){ const c=ids[i]; if(c===p+1){p=c;continue;} ranges.push(s===p?`${s}`:`${s}〜${p}`); s=p=c; }
+  const compressIds = ids => {
+    ids.sort((a,b)=>a-b);
+    const ranges=[]; let s=ids[0], p=ids[0];
+    for(let i=1;i<ids.length;i++){ const c=ids[i]; if(c===p+1){ p=c; continue; } ranges.push(s===p?`${s}`:`${s}〜${p}`); s=p=c; }
     ranges.push(s===p?`${s}`:`${s}〜${p}`); return ranges.join(',');
-  }
+  };
 
-  function renderOutput(boards,shortageMap,stockLength,grip,audit,kerf){
-    const SL=Number(stockLength), GR=Number(grip);
+  function renderOutput(boards, shortageMap, stockLen, grip, audit, kerf){
+    const SL=Number(stockLen), GR=Number(grip);
     const sigMap=new Map();
     for(const b of boards){
-      if(!b?.cuts?.length) continue;
-      const tally=tallyCuts(b.cuts);
+      if(!b.cuts.length) continue;
+      const tall=tallyCuts(b.cuts);
       const rEx=Math.max(0, r1((SL-GR)-b.used));
       const rIn=Math.max(0, r1(SL-b.used));
-      const sig=JSON.stringify({tally,rEx:+rEx.toFixed(3),rIn:+rIn.toFixed(3)});
-      if(!sigMap.has(sig)) sigMap.set(sig,{ids:[],tally,rEx,rIn});
+      const sig=JSON.stringify({tall,rEx:+rEx.toFixed(3),rIn:+rIn.toFixed(3)});
+      if(!sigMap.has(sig)) sigMap.set(sig,{ids:[],tall,rEx,rIn});
       sigMap.get(sig).ids.push(b.id);
     }
 
-    let totalRemain=0, rowsHtml='';
-    for(const {ids,tally,rEx,rIn} of Array.from(sigMap.values()).sort((a,b)=>a.ids[0]-b.ids[0])){
+    let totalRemain=0, rows='';
+    for(const {ids,tall,rEx,rIn} of [...sigMap.values()].sort((a,b)=>a.ids[0]-b.ids[0])){
       totalRemain += rIn * ids.length;
       const group=`部材${compressIds(ids)}`;
-      const remainCell=`<td class="num" rowspan="${tally.length}">${rIn.toFixed(1)}</td><td class="num" rowspan="${tally.length}">${rEx.toFixed(1)}</td>`;
-      tally.forEach((row,i)=>{
-        const inp=Number(row.input).toFixed(1);
-        const tgt=Number(row.target).toFixed(1);
-        const qty=row.count;
+      const remainCells=`<td class="num" rowspan="${tall.length}">${rIn.toFixed(1)}</td><td class="num" rowspan="${tall.length}">${rEx.toFixed(1)}</td>`;
+      tall.forEach((row,i)=>{
+        const inp=Number(row.input).toFixed(1), tgt=Number(row.target).toFixed(1), qty=row.count;
         const usedLen=(Number(row.target)*qty).toFixed(1);
-        const kerfSum=(qty*Number(kerf||0)).toFixed(1); // DOMから読まず引数を使用
-        rowsHtml += `<tr>
-          ${i===0?`<td class="group-head" rowspan="${tally.length}">${group}</td>`:``}
+        const kerfSum=(qty*Number(kerf||0)).toFixed(1);
+        rows += `<tr>
+          ${i===0?`<td class="group-head" rowspan="${tall.length}">${group}</td>`:''}
           <td class="num">${tgt}${row.meta==='URAMODE' ? ' <span class="subtle">(捨て切り)</span>' : ''}</td>
           <td class="num y">${inp}</td>
           <td class="num y">${qty}</td>
-          ${i===0?remainCell:``}
+          ${i===0?remainCells:''}
           <td class="num">${usedLen}</td>
           <td class="num subtle">${kerfSum}</td>
         </tr>`;
       });
     }
 
-    const tableHtml = `
+    const table = `
       <div class="table-wrap">
         <table class="table">
           <thead>
@@ -405,164 +278,143 @@
               <th class="num">余り</th><th class="num">有効残長</th><th class="num">実使用長</th><th class="num">削れ合計</th>
             </tr>
           </thead>
-          <tbody>${rowsHtml || `<tr><td colspan="8" class="subtle">切断結果がありません</td></tr>`}</tbody>
+          <tbody>${rows || `<tr><td colspan="8" class="subtle">切断結果がありません</td></tr>`}</tbody>
         </table>
       </div>`;
 
     const keys=[...shortageMap.keys()].sort((a,b)=>a-b);
-    let below = `<div style="margin-top:8px">合計余り（掴みしろ含む・全材）：<b>${totalRemain.toFixed(1)} mm</b></div>`;
+    let footer = `<div style="margin-top:8px">合計余り（掴みしろ含む・全材）：<b>${totalRemain.toFixed(1)} mm</b></div>`;
     if(keys.length>0){
-      below += `<div style="margin-top:6px"><b class="danger">切断不足：</b>` +
-               keys.map(k=>` <span class="danger">${Number(k).toFixed(1)}mm × ${shortageMap.get(k)}本</span>`).join(' / ') + `</div>`;
+      footer += `<div style="margin-top:6px"><b class="danger">切断不足：</b>${
+        keys.map(k=>` <span class="danger">${Number(k).toFixed(1)}mm × ${shortageMap.get(k)}本</span>`).join(' / ')
+      }</div>`;
       alertError('切断不足があります。入力や条件をご確認ください。');
     }else{
-      below += `<div style="margin-top:6px"><b>切断不足：</b>なし</div>`;
+      footer += `<div style="margin-top:6px"><b>切断不足：</b>なし</div>`;
     }
-    below += `<div style="margin-top:8px" class="subtle">
-      --- 監査 ---　要求 ${audit.demandUsage.toFixed(1)}mm ／ 容量 ${audit.totalCapacity.toFixed(1)}mm ／ 実割当 ${audit.assignedUsage.toFixed(1)}mm ／ 不足発生 ${audit.demandUsage>audit.totalCapacity?'はい':'いいえ'}
-    </div>`;
+    footer += `<div style="margin-top:8px" class="subtle">--- 監査 --- 要求 ${audit.demandUsage.toFixed(1)}mm ／ 容量 ${audit.totalCapacity.toFixed(1)}mm ／ 実割当 ${audit.assignedUsage.toFixed(1)}mm ／ 不足発生 ${audit.demandUsage>audit.totalCapacity?'はい':'いいえ'}</div>`;
 
-    $('#result').innerHTML = tableHtml + below;
+    $('#result').innerHTML = table + footer;
 
-    // スクロール中/直後タップ抑止のための監視
-    $('#result').querySelectorAll('.table-wrap').forEach(el => {
-      el.addEventListener('scroll',    markScrolled, { passive:true });
-      el.addEventListener('touchmove', markScrolled, { passive:true });
+    $('#result').querySelectorAll('.table-wrap').forEach(el=>{
+      el.addEventListener('scroll', markScrolled, {passive:true});
+      el.addEventListener('touchmove', markScrolled, {passive:true});
     });
   }
 
-  // 裏モード（余り目標の捨て切り追加）
-  function applyUraMode(boards, stockLength, grip, kerf, tolerance, spareTarget){
-    if(!(spareTarget>0) || spareTarget<=grip) return;
-    const MIN_EFFECTIVE = 50;
+  /* ==== 裏モード（余り目標の捨て切り） ==== */
+  function applyUraMode(boards, stockLen, grip, kerf, tol, spare){
+    if(!(spare>0) || spare<=grip) return;
+    const MIN_EFF=50;
     for(const b of boards){
-      const rIn = r1(stockLength - b.used);
-      const rEx = r1((stockLength - grip) - b.used);
-      const diff = r1(rIn - spareTarget);
-      if(rEx >= MIN_EFFECTIVE && diff > kerf + 1e-9){
-        const dropActual = r1(diff - kerf);
+      const rIn=r1(stockLen-b.used), rEx=r1((stockLen-grip)-b.used);
+      const diff=r1(rIn-spare);
+      if(rEx>=MIN_EFF && diff>kerf+1e-9){
+        const dropActual=r1(diff-kerf);
         if(dropActual>0){
-          const dropInput = r1(dropActual - tolerance);
-          b.cuts.push({target: dropActual, input: dropInput, meta:'URAMODE'});
-          b.used = r1(b.used + dropActual + kerf);
+          const dropInput=r1(dropActual - tol);
+          b.cuts.push({target:dropActual, input:dropInput, meta:'URAMODE'});
+          b.used=r1(b.used+dropActual+kerf);
         }
       }
     }
   }
 
+  /* ==== メイン ==== */
   function run(secret=false){
     try{
-      const stockLength = readNum('#stockLength', 0);
-      const stockCount  = readInt('#stockCount', 0);
-      const grip        = readNum('#grip', 0);
-      const kerf        = readNum('#kerf', 0);
-      const tolerance   = readNum('#tolerance', 0);
+      const stockLen=readNum('#stockLength',0);
+      const stockCnt=readInt('#stockCount',0);
+      const grip    =readNum('#grip',0);
+      const kerf    =readNum('#kerf',0);
+      const tol     =readNum('#tolerance',0);
+      const spareEl =$('#spareTarget');
+      const spare   =(spareEl && spareEl.value!=='') ? readNum('#spareTarget',null) : null;
 
-      // spareTarget は「空なら null」を許容
-      const spareEl = document.querySelector('#spareTarget');
-      const spareTarget = (spareEl && spareEl.value !== '') ? readNum('#spareTarget', null) : null;
+      $('#result').textContent='';
 
-      if ($('#result')) $('#result').textContent='';
-
-      const cuts=buildCutsForCalc(tolerance);
-      if(cuts.length===0 || stockCount<=0 || stockLength<=0){
-        if ($('#result')) $('#result').textContent='入力が不足しています。';
-        AudioMgr.warnBeep();
-        return;
+      const cuts=buildCutsForCalc(tol);
+      if(cuts.length===0 || stockCnt<=0 || stockLen<=0){
+        $('#result').textContent='入力が不足しています。'; AudioMgr.warnBeep(); return;
       }
+
       const demand=statsFromCuts(cuts,kerf);
-      const totalCapacity=r1((stockLength-grip)*stockCount);
+      const capacity=r1((stockLen-grip)*stockCnt);
 
-      let {boards,remaining}=assignBoardsDescending(cuts,stockLength,stockCount,grip,kerf);
-      remaining=gapFill(boards,remaining,stockLength,grip,kerf);
+      let {boards,remaining}=assignBoardsDescending(cuts,stockLen,stockCnt,grip,kerf);
+      remaining=gapFill(boards,remaining,stockLen,grip,kerf);
 
-      if(secret){ applyUraMode(boards, stockLength, grip, kerf, tolerance, spareTarget); }
+      if(secret) applyUraMode(boards,stockLen,grip,kerf,tol,spare);
+      if(semiMode){ remaining.sort((a,b)=>b.target-a.target); remaining=gapFill(boards,remaining,stockLen,grip,kerf); }
 
-      if(semiMode){
-        remaining.sort((a,b)=>b.target-a.target);
-        remaining=gapFill(boards,remaining,stockLength,grip,kerf);
-      }
+      const assigned=statsFromCuts(boards.flatMap(b=>b.cuts),kerf);
 
-      const assignedCutsArray=boards.flatMap(b=>b.cuts);
-      const assigned=statsFromCuts(assignedCutsArray,kerf);
-
-      const shortageMap=new Map();
-      for(const c of remaining) shortageMap.set(c.target,(shortageMap.get(c.target)||0)+1);
-      if(shortageMap.size===0){
+      const shortage=new Map();
+      for(const c of remaining) shortage.set(c.target,(shortage.get(c.target)||0)+1);
+      if(shortage.size===0){
         for(const [t,need] of demand.countByTarget.entries()){
           const done=assigned.countByTarget.get(t)||0;
-          if(done<need) shortageMap.set(t,need-done);
+          if(done<need) shortage.set(t,need-done);
         }
       }
-      const audit={ demandUsage:demand.totalUsage, totalCapacity, assignedUsage:assigned.totalUsage };
-      renderOutput(boards,shortageMap,stockLength,grip,audit,kerf);
-    }catch(err){
-      console.error('run() failed:', err);
-      alertError('演算中にエラーが発生しました。入力を確認してください。');
+
+      renderOutput(boards, shortage, stockLen, grip, {demandUsage:demand.totalUsage, totalCapacity:capacity, assignedUsage:assigned.totalUsage}, kerf);
+    }catch(e){
+      console.error(e); alertError('演算中にエラーが発生しました。入力を確認してください。');
     }
   }
 
-  // ========= 初期配線 =========
-  function wire() {
-    // 操作ボタン
-    bindTap($('#btnAdd'),   () => addCutInput());
-    bindTap($('#btnReset'), () => resetCuts());
-    bindTap($('#btnCalc'),  () => run(false));
+  /* ==== 初期化 ==== */
+  function wire(){
+    bindTap($('#btnAdd'),   ()=>addCutInput());
+    bindTap($('#btnCalc'),  ()=>run(false));
+    bindTap($('#btnReset'), ()=>resetCuts());
 
-    // 裏モードボタン：隠しコマンド & 長押し解除（移動でキャンセル）
-    (function bindUra(){
-      const btn = $('#btnUra');
-      if(!btn) return;
-
-      // 短押し：隠しコマンド成立 → 準最適ON（演算しない）／非成立 → 裏モード実行
-      bindTap(btn, () => {
-        const stockLengthVal = readNum('#stockLength', 0);
-        if (stockLengthVal === MAGIC) {
-          setSemiMode(true); vibrate(30); return;
-        }
+    // 裏モード（短押し：通常裏／隠し：部材長=77777.7 で準最適ON、3秒長押しでOFF）
+    (function(){
+      const btn=$('#btnUra'); if(!btn) return;
+      bindTap(btn, ()=>{
+        const val=readNum('#stockLength',0);
+        if(val===MAGIC){ setSemiMode(true); vibrate(30); return; }
         run(true);
       });
-
-      // 長押し3秒で準最適OFF（移動でキャンセル）
-      let lpTimer=null, isDown=false, moved=false, sx=0, sy=0;
-      const THRESH=10;
-
-      const start = (x,y) => {
-        isDown=true; moved=false; sx=x; sy=y;
-        lpTimer = setTimeout(()=>{ if(isDown && !moved){ setSemiMode(false); vibrate(50);} }, 3000);
-      };
-      const move = (e) => {
-        const t = e.touches ? e.touches[0] : e;
-        if (Math.hypot(t.clientX - sx, t.clientY - sy) > THRESH) moved = true;
-      };
-      const end = () => { isDown=false; if(lpTimer){ clearTimeout(lpTimer); lpTimer=null; } };
-
-      btn.addEventListener('touchstart', e => { const t=e.touches[0]; start(t.clientX,t.clientY); }, {passive:true});
-      btn.addEventListener('touchmove', move, {passive:true});
-      btn.addEventListener('touchend',  end);
-      btn.addEventListener('mousedown', e => start(e.clientX,e.clientY));
-      btn.addEventListener('mousemove', move);
-      btn.addEventListener('mouseup',   end);
+      let t=null, down=false, moved=false, sx=0, sy=0; const TH=10;
+      const start=(x,y)=>{ down=true; moved=false; sx=x; sy=y; t=setTimeout(()=>{ if(down && !moved){ setSemiMode(false); vibrate(50);} },3000); };
+      const move=e=>{ const pt=e.touches?e.touches[0]:e; if(Math.hypot(pt.clientX-sx,pt.clientY-sy)>TH) moved=true; };
+      const end =()=>{ down=false; if(t){clearTimeout(t); t=null;} };
+      btn.addEventListener('touchstart',e=>{const pt=e.touches[0]; start(pt.clientX,pt.clientY);},{passive:true});
+      btn.addEventListener('touchmove',move,{passive:true});
+      btn.addEventListener('touchend',end);
+      btn.addEventListener('mousedown',e=>start(e.clientX,e.clientY));
+      btn.addEventListener('mousemove',move);
+      btn.addEventListener('mouseup',end);
       btn.addEventListener('mouseleave',end);
     })();
 
-    // プリセット（4枠）
+    // プリセット
     $$('.btn-preset').forEach(bindLongPressPreset);
 
-    // エクスポート/インポート
-    wireExportImportButtons();
+    // 入出力
+    bindTap($('#btnExport'),()=>downloadText('obikyo-presets.json', JSON.stringify(dumpAll(),null,2)));
+    bindTap($('#btnImport'),()=>$('#importFile')?.click());
+    $('#importFile')?.addEventListener('change', async e=>{
+      const f=e.target.files?.[0]; if(!f) return;
+      try{ loadAll(JSON.parse(await f.text())); alert('インポート完了：カスタム1〜4に読み込みました。'); }
+      catch(err){ console.error(err); alert('インポートに失敗しました。ファイルを確認してください。'); }
+      finally{ e.target.value=''; }
+    });
 
-    // 初期行（3行）
-    for (let i = 0; i < 3; i++) addCutInput();
+    // 初期行
+    for(let i=0;i<3;i++) addCutInput();
 
-    // 出力領域やページ全体でスクロール検知（保険）
-    window.addEventListener('scroll', markScrolled, { passive:true });
-    $('#result')?.addEventListener('scroll', markScrolled, { passive:true });
+    // スクロール検知（誤タップ抑止）
+    window.addEventListener('scroll', markScrolled, {passive:true});
+    $('#result')?.addEventListener('scroll', markScrolled, {passive:true});
   }
 
   document.addEventListener('DOMContentLoaded', wire);
 
-  // ====== 互換のためグローバル公開 ======
+  // 互換：必要なら外部から呼べるように
   window.addCutInput = addCutInput;
   window.resetCuts   = resetCuts;
   window.run         = run;

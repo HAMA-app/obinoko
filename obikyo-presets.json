@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "exportedAt": "2025-08-14T14:00:15.906Z",
+  "data": {
+    "1": {
+      "meta": {
+        "savedAt": "2025-08-13T21:03:47.782Z"
+      },
+      "state": {
+        "stockLength": 1000,
+        "stockCount": 10,
+        "grip": 129,
+        "tolerance": 1,
+        "kerf": 2.5,
+        "spareTarget": 160,
+        "cuts": [
+          {
+            "length": 100,
+            "qty": 4
+          },
+          {
+            "length": 400,
+            "qty": 1
+          },
+          {
+            "length": 60,
+            "qty": 5
+          }
+        ]
+      }
+    },
+    "2": {
+      "meta": {
+        "savedAt": "2025-08-13T21:52:56.429Z"
+      },
+      "state": {
+        "stockLength": 1000,
+        "stockCount": 18,
+        "grip": 129,
+        "tolerance": 1,
+        "kerf": 2.5,
+        "spareTarget": 160,
+        "cuts": [
+          {
+            "length": 60,
+            "qty": 30
+          },
+          {
+            "length": 90,
+            "qty": 10
+          },
+          {
+            "length": 100,
+            "qty": 40
+          },
+          {
+            "length": 200,
+            "qty": 42
+          }
+        ]
+      }
+    },
+    "3": {
+      "meta": {
+        "savedAt": "2025-08-13T15:57:05.683Z"
+      },
+      "state": {
+        "stockLength": 77777.7,
+        "stockCount": 10,
+        "grip": 129,
+        "tolerance": 1,
+        "kerf": 2.5,
+        "spareTarget": 160,
+        "cuts": [
+          {
+            "length": 100,
+            "qty": 4
+          },
+          {
+            "length": 400,
+            "qty": 1
+          },
+          {
+            "length": 60,
+            "qty": 10
+          }
+        ]
+      }
+    },
+    "4": {
+      "meta": {
+        "savedAt": "2025-08-13T14:03:36.890Z"
+      },
+      "state": {
+        "stockLength": 1000,
+        "stockCount": 10,
+        "grip": 129,
+        "tolerance": 1,
+        "kerf": 2.5,
+        "spareTarget": 160,
+        "cuts": [
+          {
+            "length": 100,
+            "qty": 4
+          },
+          {
+            "length": 400,
+            "qty": 1
+          },
+          {
+            "length": 60,
+            "qty": 5
+          }
+        ]
+      }
+    }
+  }
+}
