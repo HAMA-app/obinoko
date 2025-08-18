@@ -1,4 +1,4 @@
-const CACHE_NAME = 'obikyo-cache-v2025-08-16';
+const CACHE_NAME = 'obikyo-cache-v2025-08-19';
 const ASSETS = [
   './',
   'index.html?v=2025-08-16',
