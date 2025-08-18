@@ -41,28 +41,55 @@
   /* ==== 誤タップ対策タップバインダ ==== */
   let __lastScrollAt = 0;
   const markScrolled = () => { __lastScrollAt = Date.now(); };
-  function bindTap(el, handler){
-    if(!el) return;
-    const THRESH=10, COOLDOWN=200, DUP_MS=350;
-    let sx=0, sy=0, moved=false, lastAt=0;
+function bindTap(el, handler){
+  if(!el) return;
+  const THRESH=10, COOLDOWN=200, DUP_MS=350;
+  let sx=0, sy=0, moved=false, lastAt=0;
+  let usingTouch=false;   // ← 追加：touch使用中フラグ
+  let busy=false;         // ← 追加：一時再入ガード
 
-    el.addEventListener('touchstart', e => {
-      const t=e.touches[0]; sx=t.clientX; sy=t.clientY; moved=false;
-    }, {passive:true});
-    el.addEventListener('touchmove', e => {
-      const t=e.touches[0]; if (Math.hypot(t.clientX-sx, t.clientY-sy) > THRESH) moved=true;
-    }, {passive:true});
-    el.addEventListener('touchend', e => {
-      if (moved) return; if (Date.now()-__lastScrollAt<COOLDOWN) return;
-      e.preventDefault(); lastAt=Date.now(); handler(e);
-    }, {passive:false});
-    el.addEventListener('pointerup', e => {
-      if (Date.now()-__lastScrollAt<COOLDOWN) return; lastAt=Date.now(); handler(e);
-    });
-    el.addEventListener('click', e => {
-      if (Date.now()-lastAt < DUP_MS) { e.preventDefault(); return; } handler(e);
-    }, true);
-  }
+  const safeRun = (e) => {
+    if (busy) return;
+    busy = true;
+    try { handler(e); } finally {
+      setTimeout(()=>{ busy=false; }, 50);  // 超短時間の二重起動抑止
+    }
+  };
+
+  el.addEventListener('touchstart', e => {
+    usingTouch = true;
+    const t=e.touches[0]; sx=t.clientX; sy=t.clientY; moved=false;
+  }, {passive:true});
+
+  el.addEventListener('touchmove', e => {
+    const t=e.touches[0];
+    if (Math.hypot(t.clientX-sx, t.clientY-sy) > THRESH) moved=true;
+  }, {passive:true});
+
+  el.addEventListener('touchend', e => {
+    if (moved) return;
+    if (Date.now() - __lastScrollAt < COOLDOWN) return;
+    e.preventDefault();
+    lastAt = Date.now();
+    safeRun(e);
+    // touchジェスチャ終了後、少し待ってから使用フラグ解除
+    setTimeout(()=>{ usingTouch=false; }, 300);
+  }, {passive:false});
+
+  el.addEventListener('pointerup', e => {
+    if (usingTouch) return;                        // ← 追加：touch中は無視
+    if (Date.now() - __lastScrollAt < COOLDOWN) return;
+    lastAt = Date.now();
+    safeRun(e);
+  });
+
+  el.addEventListener('click', e => {
+    if (Date.now() - lastAt < DUP_MS) { e.preventDefault(); return; }
+    if (usingTouch) { e.preventDefault(); return; } // ← 追加：touch由来のclickは無視
+    safeRun(e);
+  }, true);
+}
+
 
   /* ==== 準最適モード（隠し） ==== */
   let semiMode=false;
@@ -303,22 +330,155 @@
   }
 
   /* ==== 裏モード（余り目標の捨て切り） ==== */
-  function applyUraMode(boards, stockLen, grip, kerf, tol, spare){
-    if(!(spare>0) || spare<=grip) return;
-    const MIN_EFF=50;
-    for(const b of boards){
-      const rIn=r1(stockLen-b.used), rEx=r1((stockLen-grip)-b.used);
-      const diff=r1(rIn-spare);
-      if(rEx>=MIN_EFF && diff>kerf+1e-9){
-        const dropActual=r1(diff-kerf);
-        if(dropActual>0){
-          const dropInput=r1(dropActual - tol);
-          b.cuts.push({target:dropActual, input:dropInput, meta:'URAMODE'});
-          b.used=r1(b.used+dropActual+kerf);
-        }
+function applyUraMode(boards, stockLength, grip, kerf, tolerance, spareTarget){
+  if(!(spareTarget > 0) || spareTarget <= grip) return;
+
+  const MIN_DROP = 50;  // 捨て切りは50mm以上が望ましい
+
+  // 残カット全体（未割当）を一括で扱うため、盤面外にまとめる
+  // すでに assign/gapFill の後で、boards に割り当て済み、それ以外が remaining の想定だが
+  // ここでは boards 内の入替で生じる戻し分もプールする
+  let pool = []; // {target, input, meta?}
+  // 初期 pool は「割り当て外」に限定されるが、この関数の呼び出し元では remaining を渡していないので
+  // いまは boards 外の残は存在しない前提。以降、入替で一時的に pool を増減させる。
+
+  // 部材ごとに「余り=目標」に合わせる
+  const SL = Number(stockLength);
+  const desiredUsed = Number.isFinite(SL - spareTarget) ? r1(SL - spareTarget) : null;
+  if (desiredUsed == null || desiredUsed <= 0) return;
+
+  // 便利関数
+  const needOf = (c) => r1(c.target + kerf);
+
+  // 詰め直しヘルパ：capを超えない範囲でpoolから詰める（小物優先）
+  function fillFromPool(b, cap){
+    // 小さい順でなるべく多く拾う（必要本数の回収を優先）
+    pool.sort((a,b)=>a.target-b.target);
+    for (let i=0; i<pool.length && cap>0; ){
+      const c = pool[i];
+      const need = needOf(c);
+      if (need <= cap + 1e-9){
+        b.cuts.push(c);
+        b.used = r1(b.used + need);
+        cap = r1(cap - need);
+        pool.splice(i,1);
+      } else {
+        i++;
       }
     }
   }
+
+  for (const b of boards){
+    // すでに無割り当ての部材は対象外
+    if (!b.cuts) b.cuts = [];
+    b.used = r1(b.used);
+
+    // 1) まず「desiredUsed」を上限に、残プールから詰める
+    let cap = r1(desiredUsed - b.used);
+    if (cap > 0) fillFromPool(b, cap);
+
+    // 2) それでも必要を拾えない/desiredに届かない場合は、1本スワップ（大→小複数）
+    //    - 大きい1本を戻してcapを作り、小さいのをできるだけ詰める
+    //    - 改善度： (a) 追加本数が増える / (b) desiredUsedに近づく
+    function tryOneSwap(){
+      if (!b.cuts.length) return false;
+      // 今のギャップ
+      const beforeGap = Math.abs(desiredUsed - b.used);
+      let best = null;
+
+      // 大きい順に1本試す
+      const sortedIdx = [...b.cuts.keys()].sort((i,j)=>b.cuts[j].target - b.cuts[i].target);
+      for (const idx of sortedIdx){
+        const removed = b.cuts[idx];
+        const removedNeed = needOf(removed);
+
+        // 仮に外す
+        const cutsBackup = b.cuts;
+        const usedBackup = b.used;
+
+        // 外してプールへ
+        b.cuts = cutsBackup.slice(0, idx).concat(cutsBackup.slice(idx+1));
+        b.used = r1(usedBackup - removedNeed);
+        pool.push(removed);
+
+        // できた余白にできるだけ詰める
+        let remainCap = r1(desiredUsed - b.used);
+        if (remainCap > 0) fillFromPool(b, remainCap);
+
+        // 評価：ギャップの縮小と、拾えた本数（件数差）
+        const afterGap = Math.abs(desiredUsed - b.used);
+        const pickedDiff = b.cuts.length - (cutsBackup.length - 1); // -1は外したぶん
+        if (!best || pickedDiff > best.picked || (pickedDiff === best.picked && afterGap < best.gap)){
+          best = { idx, state: { cuts: b.cuts, used: b.used }, picked: pickedDiff, gap: afterGap };
+        }
+
+        // 元に戻す（次の候補を試すため）
+        // ※ pool に入れた removed は戻し忘れないこと
+        const lastAdded = b.cuts.filter(x=>!cutsBackup.includes(x));
+        // 追加した分を pool に戻す
+        for (const x of lastAdded) pool.push(x);
+        // ボードを元に
+        b.cuts = cutsBackup;
+        b.used = usedBackup;
+        // removed を pool から削除（末尾の同一オブジェクトを消す）
+        const idxR = pool.lastIndexOf(removed);
+        if (idxR >= 0) pool.splice(idxR,1);
+      }
+
+      if (best){
+        // ベストな入替を確定適用
+        // まず対象を本当に外す
+        const removed = b.cuts[best.idx];
+        const removedNeed = needOf(removed);
+        b.cuts.splice(best.idx, 1);
+        b.used = r1(b.used - removedNeed);
+        // removedはpoolへ
+        pool.push(removed);
+
+        // desiredUsedに合わせて再度詰める（best.state相当）
+        let cap2 = r1(desiredUsed - b.used);
+        if (cap2 > 0) fillFromPool(b, cap2);
+        return true;
+      }
+      return false;
+    }
+
+    // スワップを1回だけ試行（軽量）
+    if (Math.abs(desiredUsed - b.used) > kerf + 1e-9) {
+      tryOneSwap();
+    }
+
+    // 3) 最後に捨て切りで desiredUsed にぴったり合わせる
+    //    dropActual = desiredUsed - b.used - kerf
+    let diff = r1(desiredUsed - b.used);
+    if (diff > kerf + 1e-9){
+      let dropActual = r1(diff - kerf);
+      if (dropActual < MIN_DROP){
+        // 可能なら小物1本外してdropを確保（小さいのを1本戻してdropを確保）
+        const smallIdx = b.cuts.findIndex(x=>x.target < MIN_DROP);
+        if (smallIdx >= 0){
+          const s = b.cuts[smallIdx];
+          const sNeed = needOf(s);
+          b.cuts.splice(smallIdx,1);
+          b.used = r1(b.used - sNeed);
+          pool.push(s);
+          // 再計算
+          diff = r1(desiredUsed - b.used);
+          dropActual = r1(diff - kerf);
+        }
+      }
+      if (dropActual > 0){
+        const dropInput = r1(dropActual - tolerance);
+        b.cuts.push({ target: dropActual, input: dropInput, meta:'URAMODE' });
+        b.used = r1(b.used + dropActual + kerf);
+      }
+    }
+
+    // 念のため上限クリップ
+    const capMax = r1(SL - grip);
+    if (b.used > capMax) b.used = capMax;
+  }
+}
 
   /* ==== メイン ==== */
   function run(secret=false){
